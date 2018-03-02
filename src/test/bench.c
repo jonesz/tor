@@ -29,6 +29,9 @@ const char tor_git_revision[] = "";
 #include "onion_ntor.h"
 #include "crypto_ed25519.h"
 #include "consdiff.h"
+#include "crypto_isogeny.h"
+#include "onion_ntor_sidh.h"
+#include "onion_ntor_sike.h"
 
 #if defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_PROCESS_CPUTIME_ID)
 static uint64_t nanostart;
@@ -625,6 +628,134 @@ bench_ecdh_p224(void)
   bench_ecdh_impl(NID_secp224r1, "P-224");
 }
 
+static void
+bench_onion_ntor_sidh(void)
+{
+  const int iters = 1<<9;
+  int i;
+  curve25519_keypair_t keypair1, keypair2;
+  uint64_t start, end;
+  uint8_t client[NTOR_SIDH_ONIONSKIN_LEN];
+  uint8_t server[NTOR_SIDH_REPLY_LEN];
+  ntor_sidh_handshake_state_t *state = NULL;
+  uint8_t nodeid[DIGEST_LEN];
+  di_digest256_map_t *keymap = NULL;
+
+  curve25519_secret_key_generate(&keypair1.seckey, 0);
+  curve25519_public_key_generate(&keypair1.pubkey, &keypair1.seckey);
+  curve25519_secret_key_generate(&keypair2.seckey, 0);
+  curve25519_public_key_generate(&keypair2.pubkey, &keypair2.seckey);
+  dimap_add_entry(&keymap, keypair1.pubkey.public_key, &keypair1);
+  dimap_add_entry(&keymap, keypair2.pubkey.public_key, &keypair2);
+  crypto_rand((char*)nodeid, sizeof(nodeid));
+
+  reset_perftime();
+  start = perftime();
+
+  // Initial Client Side
+  for (i = 0; i < iters; ++i) {
+    onion_skin_ntor_sidh_create(nodeid, &keypair1.pubkey, &state, client);
+    ntor_sidh_handshake_state_free(state);
+    state = NULL;
+  }
+  end = perftime();
+  printf("Client-side, part 1: %f usec.\n", NANOCOUNT(start, end, iters)/1e3);
+
+  state = NULL;
+  onion_skin_ntor_sidh_create(nodeid, &keypair1.pubkey, &state, client);
+
+  start = perftime();
+
+  // Server Side Response
+  for (i = 0; i < iters; ++i) {
+    uint8_t key_out[CPATH_KEY_MATERIAL_LEN];
+    onion_skin_ntor_sidh_server_handshake(client, keymap, NULL, nodeid, server,
+        key_out, sizeof(key_out));
+  }
+  end = perftime();
+  printf("Server-side: %f usec\n",
+         NANOCOUNT(start, end, iters)/1e3);
+
+  start = perftime();
+
+  // Client Response
+  for (i = 0; i < iters; ++i) {
+    uint8_t key_out[CPATH_KEY_MATERIAL_LEN];
+    int s = onion_skin_ntor_sidh_client_handshake(state, server, key_out, sizeof(key_out), NULL);
+    tor_assert(s == 0);
+  }
+
+  end = perftime();
+  printf("Client-side, part 2: %f usec.\n",
+      NANOCOUNT(start, end, iters)/1e3);
+
+  ntor_sidh_handshake_state_free(state);
+  dimap_free(keymap, NULL);
+
+}
+
+static void
+bench_onion_ntor_sike(void)
+{
+  const int iters = 1<<9;
+  int i;
+  curve25519_keypair_t keypair1, keypair2;
+  uint64_t start, end;
+  uint8_t client[NTOR_SIKE_ONIONSKIN_LEN];
+  uint8_t server[NTOR_SIKE_REPLY_LEN];
+  ntor_sike_handshake_state_t *state = NULL;
+  uint8_t nodeid[DIGEST_LEN];
+  di_digest256_map_t *keymap = NULL;
+
+  curve25519_secret_key_generate(&keypair1.seckey, 0);
+  curve25519_public_key_generate(&keypair1.pubkey, &keypair1.seckey);
+  curve25519_secret_key_generate(&keypair2.seckey, 0);
+  curve25519_public_key_generate(&keypair2.pubkey, &keypair2.seckey);
+  dimap_add_entry(&keymap, keypair1.pubkey.public_key, &keypair1);
+  dimap_add_entry(&keymap, keypair2.pubkey.public_key, &keypair2);
+  crypto_rand((char*)nodeid, sizeof(nodeid));
+
+  reset_perftime();
+  start = perftime();
+  // Initial Client Side
+  for (i = 0; i < iters; ++i) {
+    onion_skin_ntor_sike_create(nodeid, &keypair1.pubkey, &state, client);
+    ntor_sike_handshake_state_free(state);
+    state = NULL;
+  }
+  end = perftime();
+  printf("Client-side, part 1: %f usec.\n", NANOCOUNT(start, end, iters)/1e3);
+
+  state = NULL;
+  onion_skin_ntor_sike_create(nodeid, &keypair1.pubkey, &state, client);
+
+  start = perftime();
+  // Server Side Response
+  for (i = 0; i < iters; ++i) {
+    uint8_t key_out[CPATH_KEY_MATERIAL_LEN];
+    onion_skin_ntor_sike_server_handshake(client, keymap, NULL, nodeid, server,
+        key_out, sizeof(key_out));
+  }
+  end = perftime();
+  printf("Server-side: %f usec\n",
+         NANOCOUNT(start, end, iters)/1e3);
+
+  start = perftime();
+  // Client Response
+  for (i = 0; i < iters; ++i) {
+    uint8_t key_out[CPATH_KEY_MATERIAL_LEN];
+    int s = onion_skin_ntor_sike_client_handshake(state, server, key_out, sizeof(key_out), NULL);
+    tor_assert(s == 0);
+  }
+
+  end = perftime();
+  printf("Client-side, part 2: %f usec.\n",
+      NANOCOUNT(start, end, iters)/1e3);
+
+  ntor_sike_handshake_state_free(state);
+  dimap_free(keymap, NULL);
+}
+
 typedef void (*bench_fn)(void);
 
 typedef struct benchmark_t {
@@ -642,6 +773,8 @@ static struct benchmark_t benchmarks[] = {
   ENT(aes),
   ENT(onion_TAP),
   ENT(onion_ntor),
+  ENT(onion_ntor_sidh),
+  ENT(onion_ntor_sike),
   ENT(ed25519),
 
   ENT(cell_aes),

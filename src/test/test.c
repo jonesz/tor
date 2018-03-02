@@ -63,6 +63,8 @@ double fabs(double x);
 #include "statefile.h"
 #include "crypto_curve25519.h"
 #include "onion_ntor.h"
+#include "onion_ntor_sidh.h"
+#include "onion_ntor_sike.h"
 
 /** Run unit tests for the onion handshake code. */
 static void
@@ -268,6 +270,131 @@ test_ntor_handshake(void *arg)
   dimap_free(s_keymap, NULL);
 }
 
+/* XXX: These SIKE and SIDH (and ntor) should be condensed into
+ * one test case that pivots; so much code reuse here. */
+
+static void
+test_ntor_sidh_handshake(void *arg)
+{
+  /* client-side */
+  ntor_sidh_handshake_state_t *c_state = NULL;
+  uint8_t c_buf[NTOR_SIDH_ONIONSKIN_LEN];
+  uint8_t c_keys[400];
+
+  /* server-side */
+  di_digest256_map_t *s_keymap=NULL;
+  curve25519_keypair_t s_keypair;
+  uint8_t s_buf[NTOR_SIDH_REPLY_LEN];
+  uint8_t s_keys[400];
+
+  /* shared */
+  const curve25519_public_key_t *server_pubkey;
+  uint8_t node_id[20] = "abcdefghijklmnopqrst";
+
+  (void) arg;
+
+  /* Make the server some keys */
+  curve25519_secret_key_generate(&s_keypair.seckey, 0);
+  curve25519_public_key_generate(&s_keypair.pubkey, &s_keypair.seckey);
+  dimap_add_entry(&s_keymap, s_keypair.pubkey.public_key, &s_keypair);
+  server_pubkey = &s_keypair.pubkey;
+
+  /* client handshake 1. */
+  memset(c_buf, 0, NTOR_ONIONSKIN_LEN);
+  tt_int_op(0, OP_EQ, onion_skin_ntor_sidh_create(node_id, server_pubkey,
+                                          &c_state, c_buf));
+
+  /* server handshake */
+  memset(s_buf, 0, NTOR_REPLY_LEN);
+  memset(s_keys, 0, 40);
+  tt_int_op(0, OP_EQ, onion_skin_ntor_sidh_server_handshake(c_buf, s_keymap, NULL,
+                                                    node_id,
+                                                    s_buf, s_keys, 400));
+
+  /* client handshake 2 */
+  memset(c_keys, 0, 40);
+  tt_int_op(0, OP_EQ, onion_skin_ntor_sidh_client_handshake(c_state, s_buf,
+                                                       c_keys, 400, NULL));
+
+  tt_mem_op(c_keys,OP_EQ, s_keys, 400);
+  memset(s_buf, 0, 40);
+  tt_mem_op(c_keys,OP_NE, s_buf, 40);
+
+  /* Now try with a bogus server response. Zero input should trigger
+   * All The Problems. */
+  memset(c_keys, 0, 400);
+  memset(s_buf, 0, NTOR_REPLY_LEN);
+  const char *msg = NULL;
+  tt_int_op(-1, OP_EQ, onion_skin_ntor_sidh_client_handshake(c_state, s_buf,
+                                                        c_keys, 400, &msg));
+  tt_str_op(msg, OP_EQ, "Zero output from curve25519 handshake");
+
+ done:
+  ntor_sidh_handshake_state_free(c_state);
+  dimap_free(s_keymap, NULL);
+}
+
+static void
+test_ntor_sike_handshake(void *arg)
+{
+  /* client-side */
+  ntor_sike_handshake_state_t *c_state = NULL;
+  uint8_t c_buf[NTOR_SIKE_ONIONSKIN_LEN];
+  uint8_t c_keys[400];
+
+  /* server-side */
+  di_digest256_map_t *s_keymap=NULL;
+  curve25519_keypair_t s_keypair;
+  uint8_t s_buf[NTOR_SIKE_REPLY_LEN];
+  uint8_t s_keys[400];
+
+  /* shared */
+  const curve25519_public_key_t *server_pubkey;
+  uint8_t node_id[20] = "abcdefghijklmnopqrst";
+
+  (void) arg;
+
+  /* Make the server some keys */
+  curve25519_secret_key_generate(&s_keypair.seckey, 0);
+  curve25519_public_key_generate(&s_keypair.pubkey, &s_keypair.seckey);
+  dimap_add_entry(&s_keymap, s_keypair.pubkey.public_key, &s_keypair);
+  server_pubkey = &s_keypair.pubkey;
+
+  /* client handshake 1. */
+  memset(c_buf, 0, NTOR_ONIONSKIN_LEN);
+  tt_int_op(0, OP_EQ, onion_skin_ntor_sike_create(node_id, server_pubkey,
+                                          &c_state, c_buf));
+
+  /* server handshake */
+  memset(s_buf, 0, NTOR_REPLY_LEN);
+  memset(s_keys, 0, 40);
+  tt_int_op(0, OP_EQ, onion_skin_ntor_sike_server_handshake(c_buf, s_keymap, NULL,
+                                                    node_id,
+                                                    s_buf, s_keys, 400));
+
+  /* client handshake 2 */
+  memset(c_keys, 0, 40);
+  tt_int_op(0, OP_EQ, onion_skin_ntor_sike_client_handshake(c_state, s_buf,
+                                                       c_keys, 400, NULL));
+
+  tt_mem_op(c_keys,OP_EQ, s_keys, 400);
+  memset(s_buf, 0, 40);
+  tt_mem_op(c_keys,OP_NE, s_buf, 40);
+
+  /* Now try with a bogus server response. Zero input should trigger
+   * All The Problems. */
+  memset(c_keys, 0, 400);
+  memset(s_buf, 0, NTOR_REPLY_LEN);
+  const char *msg = NULL;
+  tt_int_op(-1, OP_EQ, onion_skin_ntor_sike_client_handshake(c_state, s_buf,
+                                                        c_keys, 400, &msg));
+  tt_str_op(msg, OP_EQ, "Zero output from curve25519 handshake");
+
+ done:
+  ntor_sike_handshake_state_free(c_state);
+  dimap_free(s_keymap, NULL);
+}
+
 static void
 test_fast_handshake(void *arg)
 {
@@ -310,20 +437,32 @@ test_onion_queues(void *arg)
 {
   uint8_t buf1[TAP_ONIONSKIN_CHALLENGE_LEN] = {0};
   uint8_t buf2[NTOR_ONIONSKIN_LEN] = {0};
+  uint8_t buf3[NTOR_SIDH_ONIONSKIN_LEN] = {0};
+  uint8_t buf4[NTOR_SIKE_ONIONSKIN_LEN] = {0};
 
   or_circuit_t *circ1 = or_circuit_new(0, NULL);
   or_circuit_t *circ2 = or_circuit_new(0, NULL);
+  or_circuit_t *circ3 = or_circuit_new(0, NULL);
+  or_circuit_t *circ4 = or_circuit_new(0, NULL);
 
-  create_cell_t *onionskin = NULL, *create2_ptr;
+  create_cell_t *onionskin = NULL, *create2_ptr; //*create4_ptr;
   create_cell_t *create1 = tor_malloc_zero(sizeof(create_cell_t));
   create_cell_t *create2 = tor_malloc_zero(sizeof(create_cell_t));
+  create_cell_t *create3 = tor_malloc_zero(sizeof(create_cell_t));
+  create_cell_t *create4 = tor_malloc_zero(sizeof(create_cell_t));
   (void)arg;
   create2_ptr = create2; /* remember, but do not free */
+  //create4_ptr = create4;
 
   create_cell_init(create1, CELL_CREATE, ONION_HANDSHAKE_TYPE_TAP,
                    TAP_ONIONSKIN_CHALLENGE_LEN, buf1);
   create_cell_init(create2, CELL_CREATE, ONION_HANDSHAKE_TYPE_NTOR,
                    NTOR_ONIONSKIN_LEN, buf2);
+  create_cell_init(create3, CELL_CREATE, ONION_HANDSHAKE_TYPE_NTOR_SIDH,
+                   NTOR_SIDH_ONIONSKIN_LEN, buf3);
+  create_cell_init(create4, CELL_CREATE, ONION_HANDSHAKE_TYPE_NTOR_SIKE,
+                   NTOR_SIKE_ONIONSKIN_LEN, buf4);
+
 
   tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_TAP));
   tt_int_op(0,OP_EQ, onion_pending_add(circ1, create1));
@@ -335,20 +474,49 @@ test_onion_queues(void *arg)
   create2 = NULL;
   tt_int_op(1,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR));
 
+  tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIDH));
+  tt_int_op(0,OP_EQ, onion_pending_add(circ3, create3));
+  create3 = NULL;
+  tt_int_op(1, OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIDH));
+
+  /*
+  tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIKE));
+  tt_int_op(0,OP_EQ, onion_pending_add(circ4, create4));
+  create4 = NULL;
+  tt_int_op(1, OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIKE));
+  */
+
   tt_ptr_op(circ2,OP_EQ, onion_next_task(&onionskin));
   tt_int_op(1,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_TAP));
   tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR));
+  tt_int_op(1,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIDH));
+  tt_int_op(1,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIDH));
   tt_ptr_op(onionskin, OP_EQ, create2_ptr);
+
+  /*
+  tt_ptr_op(circ4,OP_EQ, onion_next_task(&onionskin));
+  tt_int_op(1,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_TAP));
+  tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR));
+  tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIDH));
+  tt_int_op(1,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIKE));
+  tt_ptr_op(onionskin, OP_EQ, create4_ptr);
+  */
 
   clear_pending_onions();
   tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_TAP));
   tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR));
+  tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIDH));
+  tt_int_op(0,OP_EQ, onion_num_pending(ONION_HANDSHAKE_TYPE_NTOR_SIKE));
 
  done:
   circuit_free(TO_CIRCUIT(circ1));
   circuit_free(TO_CIRCUIT(circ2));
+  circuit_free(TO_CIRCUIT(circ3));
+  circuit_free(TO_CIRCUIT(circ4));
   tor_free(create1);
   tor_free(create2);
+  tor_free(create3);
+  tor_free(create4);
   tor_free(onionskin);
 }
 
@@ -1152,6 +1320,8 @@ static struct testcase_t test_array[] = {
   { "bad_onion_handshake", test_bad_onion_handshake, 0, NULL, NULL },
   ENT(onion_queues),
   { "ntor_handshake", test_ntor_handshake, 0, NULL, NULL },
+  { "ntor_sidh_handshake", test_ntor_sidh_handshake, 0, NULL, NULL},
+  { "ntor_sike_handshake", test_ntor_sike_handshake, 0, NULL, NULL},
   { "fast_handshake", test_fast_handshake, 0, NULL, NULL },
   FORK(circuit_timeout),
   FORK(rend_fns),

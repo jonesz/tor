@@ -15,9 +15,13 @@
  * extend them an additional hop.
  *
  * In this module, we provide a set of abstractions to create a uniform
- * interface over the three circuit extension handshakes that Tor has used
+ * interface over the three(?) circuit extension handshakes that Tor has used
  * over the years (TAP, CREATE_FAST, and ntor).  These handshakes are
  * implemented in onion_tap.c, onion_fast.c, and onion_ntor.c respectively.
+ *
+ * (?) Two more handshake has been added (with this patch!), ntor_sidh and 
+ * ntor_sike, which are implemented in ntor_sidh.c and ntor_sike.c. 
+ * These handshake provides PQ bits!
  *
  * All[*] of these handshakes follow a similar pattern: a client, knowing
  * some key from the relay it wants to extend through, generates the
@@ -72,6 +76,8 @@
 #include "onion_fast.h"
 #include "onion_ntor.h"
 #include "onion_tap.h"
+#include "onion_ntor_sidh.h"
+#include "onion_ntor_sike.h"
 #include "relay.h"
 #include "rephist.h"
 #include "router.h"
@@ -99,12 +105,23 @@ static TOR_TAILQ_HEAD(onion_queue_head_t, onion_queue_t)
 { TOR_TAILQ_HEAD_INITIALIZER(ol_list[0]), /* tap */
   TOR_TAILQ_HEAD_INITIALIZER(ol_list[1]), /* fast */
   TOR_TAILQ_HEAD_INITIALIZER(ol_list[2]), /* ntor */
+  TOR_TAILQ_HEAD_INITIALIZER(ol_list[3]), /* ntor-sidh */
+  TOR_TAILQ_HEAD_INITIALIZER(ol_list[4]), /* ntor-sike */
 };
 
 /** Number of entries of each type currently in each element of ol_list[]. */
 static int ol_entries[MAX_ONION_HANDSHAKE_TYPE+1];
 
 static int num_ntors_per_tap(void);
+/* XXX: We've added two function defs for these, but I think it's much more likely that
+ * we need to refactor "X per X" or "how fast can we do "X in {A..Z]}" time.
+ * It's my belief that it'd be better to build a sort of standard "handshake weight" and
+ * grade protocols based around that; give each handshake a percentage and increment
+ * by that weight up to a certain point. Prioritizing handshakes could then be hardcoded?
+ *
+ * Will definitley try this in a more abstracted PQ handshake setting :) */
+//static int num_ntor_sidhs_per_tap(void);
+//static int num_ntor_sikes_per_tap(void);
 static void onion_queue_entry_remove(onion_queue_t *victim);
 
 /* XXXX Check lengths vs MAX_ONIONSKIN_{CHALLENGE,REPLY}_LEN.
@@ -121,8 +138,8 @@ have_room_for_onionskin(uint16_t type)
 {
   const or_options_t *options = get_options();
   int num_cpus;
-  uint64_t tap_usec, ntor_usec;
-  uint64_t ntor_during_tap_usec, tap_during_ntor_usec;
+  uint64_t tap_usec, ntor_usec, ntor_sidh_usec, ntor_sike_usec;
+  uint64_t tap_during_ntor_usec, ntor_during_tap_usec;
 
   /* If we've got fewer than 50 entries, we always have room for one more. */
   if (ol_entries[type] < 50)
@@ -141,6 +158,16 @@ have_room_for_onionskin(uint16_t type)
                                     ol_entries[ONION_HANDSHAKE_TYPE_NTOR],
                                     ONION_HANDSHAKE_TYPE_NTOR) / num_cpus;
 
+  /* How long would it take to process all the NTor SIDH cells in the queue? */
+  ntor_sidh_usec = estimated_usec_for_onionskins(
+                                    ol_entries[ONION_HANDSHAKE_TYPE_NTOR_SIDH],
+                                    ONION_HANDSHAKE_TYPE_NTOR_SIDH) / num_cpus;
+
+  /* How long would it take to process all the NTor SIKE cells in the queue? */
+  ntor_sike_usec = estimated_usec_for_onionskins(
+                                    ol_entries[ONION_HANDSHAKE_TYPE_NTOR_SIKE],
+                                    ONION_HANDSHAKE_TYPE_NTOR_SIKE) / num_cpus;
+
   /* How long would it take to process the tap cells that we expect to
    * process while draining the ntor queue? */
   tap_during_ntor_usec  = estimated_usec_for_onionskins(
@@ -155,8 +182,6 @@ have_room_for_onionskin(uint16_t type)
         ol_entries[ONION_HANDSHAKE_TYPE_TAP] * num_ntors_per_tap()),
                                     ONION_HANDSHAKE_TYPE_NTOR) / num_cpus;
 
-  /* See whether that exceeds MaxOnionQueueDelay. If so, we can't queue
-   * this. */
   if (type == ONION_HANDSHAKE_TYPE_NTOR &&
       (ntor_usec + tap_during_ntor_usec) / 1000 >
        (uint64_t)options->MaxOnionQueueDelay)
@@ -171,6 +196,21 @@ have_room_for_onionskin(uint16_t type)
    * more than 2/3 of the space on the queue. */
   if (type == ONION_HANDSHAKE_TYPE_TAP &&
       tap_usec / 1000 > (uint64_t)options->MaxOnionQueueDelay * 2 / 3)
+    return 0;
+
+  /* XXX: These two handshakes might be so slow they're never added.
+   * That's really bad! */
+
+  /* If we support the ntor_sidh handshake, don't let NTOR_SIDH handshakes
+   * use more than 1/3 of the space on the queue. */
+  if (type == ONION_HANDSHAKE_TYPE_NTOR_SIDH &&
+      ntor_sidh_usec / 1000 > (uint64_t)options->MaxOnionQueueDelay * 1 / 3)
+    return 0;
+
+  /* If we support the ntor_sike handshake, don't let NTOR_SIKE handshakes
+   * use more than 1/3 of the space on the queue. */
+  if (type == ONION_HANDSHAKE_TYPE_NTOR_SIKE &&
+      ntor_sike_usec / 1000 > (uint64_t)options->MaxOnionQueueDelay * 1 / 3)
     return 0;
 
   return 1;
@@ -218,11 +258,12 @@ onion_pending_add(or_circuit_t *circ, create_cell_t *onionskin)
     return -1;
   }
 
+  /* XXX: This log info is busted. */
   ++ol_entries[onionskin->handshake_type];
   log_info(LD_OR, "New create (%s). Queues now ntor=%d and tap=%d.",
     onionskin->handshake_type == ONION_HANDSHAKE_TYPE_NTOR ? "ntor" : "tap",
-    ol_entries[ONION_HANDSHAKE_TYPE_NTOR],
-    ol_entries[ONION_HANDSHAKE_TYPE_TAP]);
+      ol_entries[ONION_HANDSHAKE_TYPE_NTOR],
+      ol_entries[ONION_HANDSHAKE_TYPE_TAP]);
 
   circ->onionqueue_entry = tmp;
   TOR_TAILQ_INSERT_TAIL(&ol_list[onionskin->handshake_type], tmp, next);
@@ -260,6 +301,38 @@ num_ntors_per_tap(void)
                                  MIN_NUM_NTORS_PER_TAP,
                                  MAX_NUM_NTORS_PER_TAP);
 }
+
+/** Same as above, but for ntor_sidh. 
+ * XXX: This needs to be changed. 
+static int
+num_ntor_sidhs_per_tap(void)
+{
+#define DEFAULT_NUM_NTOR_SIDHS_PER_TAP 2
+#define MIN_NUM_NTOR_SIDHS_PER_TAP 1
+#define MAX_NUM_NTOR_SIDHS_PER_TAP 100
+
+  return networkstatus_get_param(NULL, "NumNTorSidhsPerTAP",
+                                 DEFAULT_NUM_NTOR_SIDHS_PER_TAP,
+                                 MIN_NUM_NTOR_SIDHS_PER_TAP,
+                                 MAX_NUM_NTOR_SIDHS_PER_TAP);
+}
+*/
+
+/** Same as above, but for ntor_sike.
+ * XXX: This needs to be changed. 
+static int
+num_ntor_sikes_per_tap(void)
+{
+#define DEFAULT_NUM_NTOR_SIKES_PER_TAP 2
+#define MIN_NUM_NTOR_SIKES_PER_TAP 1
+#define MAX_NUM_NTOR_SIKES_PER_TAP 100
+
+  return networkstatus_get_param(NULL, "NumNTorSidhsPerTAP",
+                                 DEFAULT_NUM_NTOR_SIKES_PER_TAP,
+                                 MIN_NUM_NTOR_SIKES_PER_TAP,
+                                 MAX_NUM_NTOR_SIKES_PER_TAP);
+}
+*/
 
 /** Choose which onion queue we'll pull from next. If one is empty choose
  * the other; if they both have elements, load balance across them but
@@ -322,6 +395,7 @@ onion_next_task(create_cell_t **onionskin_out)
   circ = head->circ;
   if (head->onionskin)
     --ol_entries[head->handshake_type];
+  // NOTE: This needs to get hashed out.
   log_info(LD_OR, "Processing create (%s). Queues now ntor=%d and tap=%d.",
     head->handshake_type == ONION_HANDSHAKE_TYPE_NTOR ? "ntor" : "tap",
     ol_entries[ONION_HANDSHAKE_TYPE_NTOR],
@@ -454,6 +528,14 @@ onion_handshake_state_release(onion_handshake_state_t *state)
     ntor_handshake_state_free(state->u.ntor);
     state->u.ntor = NULL;
     break;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIDH:
+    ntor_sidh_handshake_state_free(state->u.ntor_sidh);
+    state->u.ntor_sidh = NULL;
+    break;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIKE:
+    ntor_sike_handshake_state_free(state->u.ntor_sike);
+    state->u.ntor_sike = NULL;
+    break;
   default:
     /* LCOV_EXCL_START
      * This state should not even exist. */
@@ -505,6 +587,26 @@ onion_skin_create(int type,
       return -1;
 
     r = NTOR_ONIONSKIN_LEN;
+    break;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIDH:
+    if (!extend_info_supports_ntor_sidh(node))
+      return -1;
+    if (onion_skin_ntor_sidh_create((const uint8_t*)node->identity_digest,
+                               &node->curve25519_onion_key,
+                               &state_out->u.ntor_sidh,
+                               onion_skin_out) < 0)
+      return -1;
+    r = NTOR_SIDH_ONIONSKIN_LEN;
+    break;
+ case ONION_HANDSHAKE_TYPE_NTOR_SIKE:
+    if (!extend_info_supports_ntor_sike(node))
+      return -1;
+    if (onion_skin_ntor_sike_create((const uint8_t*)node->identity_digest,
+                               &node->curve25519_onion_key,
+                               &state_out->u.ntor_sike,
+                               onion_skin_out) < 0)
+      return -1;
+    r = NTOR_SIKE_ONIONSKIN_LEN;
     break;
   default:
     /* LCOV_EXCL_START
@@ -578,6 +680,50 @@ onion_skin_server_handshake(int type,
       memwipe(keys_tmp, 0, keys_tmp_len);
       tor_free(keys_tmp);
       r = NTOR_REPLY_LEN;
+    }
+    break;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIDH:
+    if (onionskin_len < NTOR_SIDH_ONIONSKIN_LEN)
+      return -1;
+    {
+      size_t keys_tmp_len = keys_out_len + DIGEST_LEN;
+      uint8_t *keys_tmp = tor_malloc(keys_out_len + DIGEST_LEN);
+
+      if (onion_skin_ntor_sidh_server_handshake(
+            onion_skin, keys->curve25519_key_map,
+            keys->junk_keypair,
+            keys->my_identity,
+            reply_out, keys_tmp, keys_tmp_len)<0) {
+        tor_free(keys_tmp);
+        return -1;
+      }
+      memcpy(keys_out, keys_tmp, keys_out_len);
+      memcpy(rend_nonce_out, keys_tmp+keys_out_len, DIGEST_LEN);
+      memwipe(keys_tmp, 0, keys_tmp_len);
+      tor_free(keys_tmp);
+      r = NTOR_SIDH_REPLY_LEN;
+    }
+    break;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIKE:
+    if (onionskin_len < NTOR_SIKE_ONIONSKIN_LEN)
+      return -1;
+    {
+      size_t keys_tmp_len = keys_out_len + DIGEST_LEN;
+      uint8_t *keys_tmp = tor_malloc(keys_out_len + DIGEST_LEN);
+
+      if (onion_skin_ntor_sike_server_handshake(
+            onion_skin, keys->curve25519_key_map,
+            keys->junk_keypair,
+            keys->my_identity,
+            reply_out, keys_tmp, keys_tmp_len)<0) {
+        tor_free(keys_tmp);
+        return -1;
+      }
+      memcpy(keys_out, keys_tmp, keys_out_len);
+      memcpy(rend_nonce_out, keys_tmp+keys_out_len, DIGEST_LEN);
+      memwipe(keys_tmp, 0, keys_tmp_len);
+      tor_free(keys_tmp);
+      r = NTOR_SIKE_REPLY_LEN;
     }
     break;
   default:
@@ -660,6 +806,48 @@ onion_skin_client_handshake(int type,
       tor_free(keys_tmp);
     }
     return 0;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIDH:
+    if (reply_len < NTOR_SIDH_REPLY_LEN) {
+      if (msg_out)
+        *msg_out = "ntor sidh reply was not of the correct length.";
+      return -1;
+    }
+    {
+      size_t keys_tmp_len = keys_out_len + DIGEST_LEN;
+      uint8_t *keys_tmp = tor_malloc(keys_tmp_len);
+      if (onion_skin_ntor_sidh_client_handshake(handshake_state->u.ntor_sidh,
+                                        reply,
+                                        keys_tmp, keys_tmp_len, msg_out) < 0) {
+        tor_free(keys_tmp);
+        return -1;
+      }
+      memcpy(keys_out, keys_tmp, keys_out_len);
+      memcpy(rend_authenticator_out, keys_tmp + keys_out_len, DIGEST_LEN);
+      memwipe(keys_tmp, 0, keys_tmp_len);
+      tor_free(keys_tmp);
+    }
+    return 0;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIKE:
+    if (reply_len < NTOR_SIKE_REPLY_LEN) {
+      if (msg_out)
+        *msg_out = "ntor sike reply was not of the correct length.";
+      return -1;
+    }
+    {
+      size_t keys_tmp_len = keys_out_len + DIGEST_LEN;
+      uint8_t *keys_tmp = tor_malloc(keys_tmp_len);
+      if (onion_skin_ntor_sike_client_handshake(handshake_state->u.ntor_sike,
+                                        reply,
+                                        keys_tmp, keys_tmp_len, msg_out) < 0) {
+        tor_free(keys_tmp);
+        return -1;
+      }
+      memcpy(keys_out, keys_tmp, keys_out_len);
+      memcpy(rend_authenticator_out, keys_tmp + keys_out_len, DIGEST_LEN);
+      memwipe(keys_tmp, 0, keys_tmp_len);
+      tor_free(keys_tmp);
+    }
+    return 0;
   default:
     log_warn(LD_BUG, "called with unknown handshake state type %d", type);
     tor_fragile_assert();
@@ -676,7 +864,9 @@ check_create_cell(const create_cell_t *cell, int unknown_ok)
   switch (cell->cell_type) {
   case CELL_CREATE:
     if (cell->handshake_type != ONION_HANDSHAKE_TYPE_TAP &&
-        cell->handshake_type != ONION_HANDSHAKE_TYPE_NTOR)
+        cell->handshake_type != ONION_HANDSHAKE_TYPE_NTOR &&
+        cell->handshake_type != ONION_HANDSHAKE_TYPE_NTOR_SIDH &&
+        cell->handshake_type != ONION_HANDSHAKE_TYPE_NTOR_SIKE)
       return -1;
     break;
   case CELL_CREATE_FAST:
@@ -700,6 +890,14 @@ check_create_cell(const create_cell_t *cell, int unknown_ok)
     break;
   case ONION_HANDSHAKE_TYPE_NTOR:
     if (cell->handshake_len != NTOR_ONIONSKIN_LEN)
+      return -1;
+    break;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIDH:
+    if (cell->handshake_len != NTOR_SIDH_ONIONSKIN_LEN)
+      return -1;
+    break;
+  case ONION_HANDSHAKE_TYPE_NTOR_SIKE:
+    if (cell->handshake_len != NTOR_SIKE_ONIONSKIN_LEN)
       return -1;
     break;
   default:
@@ -762,6 +960,12 @@ parse_create2_payload(create_cell_t *cell_out, const uint8_t *p, size_t p_len)
  **/
 #define NTOR_CREATE_MAGIC "ntorNTORntorNTOR"
 
+/** Magic string which, in a CREATE or EXTEND cell, indicates that a seeming
+ * TAP payload is really an ntor_sidh/ntor_sike payload. ..
+ * XXX: Apparently CREATE2 seems to be sort of useless? ;) */
+#define NTOR_SIDH_CREATE_MAGIC "ntorSIDHNTORsidh"
+#define NTOR_SIKE_CREATE_MAGIC "ntorSIKENTORsike"
+
 /** Parse a CREATE, CREATE_FAST, or CREATE2 cell from <b>cell_in</b> into
  * <b>cell_out</b>. Return 0 on success, -1 on failure. (We reject some
  * syntactically valid CREATE2 cells that we can't generate or react to.) */
@@ -773,6 +977,12 @@ create_cell_parse(create_cell_t *cell_out, const cell_t *cell_in)
     if (tor_memeq(cell_in->payload, NTOR_CREATE_MAGIC, 16)) {
       create_cell_init(cell_out, CELL_CREATE, ONION_HANDSHAKE_TYPE_NTOR,
                        NTOR_ONIONSKIN_LEN, cell_in->payload+16);
+    } else if (tor_memeq(cell_in->payload, NTOR_SIDH_CREATE_MAGIC, 16)) {
+      create_cell_init(cell_out, CELL_CREATE, ONION_HANDSHAKE_TYPE_NTOR_SIDH,
+                       NTOR_SIDH_ONIONSKIN_LEN, cell_in->payload+16);
+    } else if (tor_memeq(cell_in->payload, NTOR_SIKE_CREATE_MAGIC, 16)) {
+      create_cell_init(cell_out, CELL_CREATE, ONION_HANDSHAKE_TYPE_NTOR_SIKE,
+                        NTOR_SIKE_ONIONSKIN_LEN, cell_in->payload+16);
     } else {
       create_cell_init(cell_out, CELL_CREATE, ONION_HANDSHAKE_TYPE_TAP,
                        TAP_ONIONSKIN_CHALLENGE_LEN, cell_in->payload);
@@ -801,7 +1011,8 @@ check_created_cell(const created_cell_t *cell)
   switch (cell->cell_type) {
   case CELL_CREATED:
     if (cell->handshake_len != TAP_ONIONSKIN_REPLY_LEN &&
-        cell->handshake_len != NTOR_REPLY_LEN)
+        cell->handshake_len != NTOR_REPLY_LEN &&
+        cell->handshake_len != NTOR_SIDH_REPLY_LEN)
       return -1;
     break;
   case CELL_CREATED_FAST:
@@ -895,6 +1106,18 @@ extend_cell_from_extend1_cell_body(extend_cell_t *cell_out,
     cell_out->create_cell.handshake_len = NTOR_ONIONSKIN_LEN;
     memcpy(cell_out->create_cell.onionskin, cell->onionskin + 16,
            NTOR_ONIONSKIN_LEN);
+  } else if (tor_memeq(cell->onionskin, NTOR_SIDH_CREATE_MAGIC, 16)) {
+    cell_out->create_cell.cell_type = CELL_CREATE2;
+    cell_out->create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_SIDH;
+    cell_out->create_cell.handshake_len = NTOR_SIDH_ONIONSKIN_LEN;
+    memcpy(cell_out->create_cell.onionskin, cell->onionskin + 16,
+        NTOR_SIDH_ONIONSKIN_LEN);
+  } else if (tor_memeq(cell->onionskin, NTOR_SIKE_CREATE_MAGIC, 16)) {
+    cell_out->create_cell.cell_type = CELL_CREATE2;
+    cell_out->create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_SIKE;
+    cell_out->create_cell.handshake_len = NTOR_SIKE_ONIONSKIN_LEN;
+    memcpy(cell_out->create_cell.onionskin, cell->onionskin + 16,
+        NTOR_SIKE_ONIONSKIN_LEN);
   } else {
     cell_out->create_cell.cell_type = CELL_CREATE;
     cell_out->create_cell.handshake_type = ONION_HANDSHAKE_TYPE_TAP;

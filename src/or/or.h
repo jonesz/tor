@@ -2814,6 +2814,12 @@ typedef struct extend_info_t {
   tor_addr_t addr; /**< IP address. */
   crypto_pk_t *onion_key; /**< Current onionskin key. */
   curve25519_public_key_t curve25519_onion_key;
+
+  /* A couple bits to signify whether a router can do the ntor_{sike/sidh}
+   * handshakes. XXXpq-handshakes: I'm not sure if this is where this is done? */
+  unsigned int is_ntor_sike_capable:1;
+  unsigned int is_ntor_sidh_capable:1;
+
 } extend_info_t;
 
 /** Certificate for v3 directory protocol: binds long-term authority identity
@@ -2862,16 +2868,23 @@ typedef enum {
 
 struct fast_handshake_state_t;
 struct ntor_handshake_state_t;
+struct ntor_sidh_handshake_state_t;
+struct ntor_sike_handshake_state_t;
 #define ONION_HANDSHAKE_TYPE_TAP  0x0000
 #define ONION_HANDSHAKE_TYPE_FAST 0x0001
 #define ONION_HANDSHAKE_TYPE_NTOR 0x0002
-#define MAX_ONION_HANDSHAKE_TYPE 0x0002
+// Rebel Alliance is supposed to be 0x003!
+#define ONION_HANDSHAKE_TYPE_NTOR_SIDH 0x0004
+#define ONION_HANDSHAKE_TYPE_NTOR_SIKE 0x0005
+#define MAX_ONION_HANDSHAKE_TYPE 0x0005
 typedef struct {
   uint16_t tag;
   union {
     struct fast_handshake_state_t *fast;
     crypto_dh_t *tap;
     struct ntor_handshake_state_t *ntor;
+    struct ntor_sidh_handshake_state_t *ntor_sidh;
+    struct ntor_sike_handshake_state_t *ntor_sike;
   } u;
 } onion_handshake_state_t;
 

@@ -62,6 +62,8 @@ void extend_info_free(extend_info_t *info);
 int extend_info_addr_is_allowed(const tor_addr_t *addr);
 int extend_info_supports_tap(const extend_info_t* ei);
 int extend_info_supports_ntor(const extend_info_t* ei);
+int extend_info_supports_ntor_sidh(const extend_info_t* ei);
+int extend_info_supports_ntor_sike(const extend_info_t* ei);
 int circuit_can_use_tap(const origin_circuit_t *circ);
 int circuit_has_usable_onion_key(const origin_circuit_t *circ);
 int extend_info_has_preferred_onion_key(const extend_info_t* ei);

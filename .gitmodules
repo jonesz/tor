@@ -1,3 +1,9 @@
 [submodule "src/ext/rust"]
 	path = src/ext/rust
 	url = https://git.torproject.org/user/sebastian/tor-rust-dependencies
+[submodule "src/ext/isogeny/PQCrypto-SIKE"]
+	path = src/ext/isogeny/PQCrypto-SIKE
+	url = https://github.com/Microsoft/PQCrypto-SIKE
+[submodule "src/ext/isogeny/PQCrypto-SIDH"]
+	path = src/ext/isogeny/PQCrypto-SIDH
+	url = https://github.com/Microsoft/PQCrypto-SIDH

@@ -2825,6 +2825,24 @@ extend_info_supports_ntor(const extend_info_t* ei)
                           CURVE25519_PUBKEY_LEN);
 }
 
+/* Does ei support ntor_sidh? 
+ * TODO: this needs to be hashed out. */
+int
+extend_info_supports_ntor_sidh(const extend_info_t* ei)
+{
+  tor_assert(ei);
+  return 0;
+}
+
+/* Does ei support ntor_sike?
+ * TODO: this needs to be hashed out. */
+int
+extend_info_supports_ntor_sike(const extend_info_t* ei)
+{
+  tor_assert(ei);
+  return 0;
+}
+
 /* Is circuit purpose allowed to use the deprecated TAP encryption protocol?
  * The hidden service protocol still uses TAP for some connections, because
  * ntor onion keys aren't included in HS descriptors or INTRODUCE cells. */

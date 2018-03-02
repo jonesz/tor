@@ -28,6 +28,7 @@ FUZZING_LIBS = \
 	src/common/libor-crypto-testing.a \
 	$(LIBKECCAK_TINY) \
 	$(LIBDONNA) \
+        $(LIBSIKE) \
 	src/common/libor-testing.a \
 	src/common/libor-ctime-testing.a \
 	src/common/libor-event-testing.a \
@@ -46,6 +47,7 @@ oss-fuzz-prereqs: \
 	src/common/libor-crypto-testing.a \
 	$(LIBKECCAK_TINY) \
 	$(LIBDONNA) \
+        $(LIBSIKE) \
 	src/common/libor-testing.a \
 	src/common/libor-ctime-testing.a \
 	src/common/libor-event-testing.a \

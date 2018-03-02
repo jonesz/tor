@@ -1,0 +1,216 @@
+Filename: qc-resistant-handshakes.txt
+Title: QC Resistant Handshakes for Tor.
+Author: Ethan Jones
+
+Table of Contents:
+  a: Building/Preamble
+
+  1. Introduction
+  2. Applicable Schemes
+  3. SIKE and SIDH
+  4. Handshake Design
+  5. Benchmarks
+  6. Closing
+
+=====
+
+  BUILDING/PREAMBLE
+
+  a: Before the main course, here's how to build this thing as I've not integrated SIKE into the build system. The reasons for doing so are:
+    1.There's definitley some duplicated code that needs to be pruned and remediated (SHA3, for example).
+    2. Some architecture specific stuff (src/ext/isogeny/config.h) exists in the isogeny library; I'm sure the same stuff exists in tor when building donna, siphash, whatever.
+       This needs to be reconciled; when tor supports a _large_ pool of architectures, SIKE should probably support them aswell.
+    3. It simply wasn't the goal of this project. If I was intent on trying to deploy this, I'd definitley stick it in there, but this is more PoC.
+
+  Won't build on Windows (didn't mess with the .nmake(?) files), have only tested on Linux.
+
+  With all that being said, building can be done with:
+    `cd ./src/ext/isogeny`, `make`
+  This will throw two .a files, libsike and libsike_for_testing in `./src/ext/isogeny/sike`; tor's Automake expects them there.
+
+  You should be able to then `cd ../../`, `./configure` with whatever options, then `make`, building tor with SIKE linked in.
+
+  There's a few tests that can be run with `./src/test/test_ntor_isogeny.sh`, `./src/test/bench`, and just the general `./src/test/test`.
+
+  Disclaimer: !- THIS CODE HAS HAD NO SECURITY AUDIT -!
+  Good luck!
+  
+=====
+
+  INTRODUCTION
+
+  The currently implemented tor handshake (ntor) provides no post-quantum security. While there's no feasible way to attack and decrypt messages sent today, a powerful actor can record encrypted messages now and decrypt them in the future with a procured quantum computer. To thwart this attack, we've examined schemes submitted to NIST and provided two implementations (isogeny based) that provide a theorized post-quantum security. These handshake implementations can be deployed today and require no major changes to the foundational aspects of the tor network. In addition, we benchmark them, analyze the ease of integrating them into circuit creation, and provide information as to what needs to be done in the future.
+
+=====
+
+  APPLICABLE SCHEMES
+
+  With NIST's competition's submission stage closing, we are provided with 80~ or so schemes to choose from. Our requirements for a more drop-in replacement are:
+    a. The total construction (whether that be KEM only, KEM+existing ntor, or a modification to ntor) must fit inside existing tor CREATE cells: < 505 bytes.
+      i. NOTE: this will soon be obsolete with bigger create cells! That being said, we should be aiming for as small key-sizes as possible to prevent reducing the total network throughput for actual encrypted messages. There should be some napkin math out there concerning this and detailing how much "real data" we'd lose if we added X-bytes to every create cell.
+    b. The targeted construction should be as efficient as possible; in the past, one could prevent access/DDoS the tor network with the creation of costly TAP handshakes.
+    c. Any other concerns surrounding the historical difficulty of the hardness problem, the quality of the implemented library, etc. 
+
+  Using data[1] provided by Jacob Alperin Sheriff on behalf of NIST, the following schemes seem to be applicable:
+    1. SIKE (and SIDH, an ephemeral diffie hellman candidate). Isogeny based; computationally hard and inefficient, but has _very_ small key-sizes.
+    2. LAKE-I. Code-based (ideal LRPC codes).
+    3. Round2. Lattice-based. Multiple variants. (Additionally, there's a flaw in the proof of the IND-CPA security).
+
+    NOTE: We haven't considered compression techniques that could act upon public-keys/ciphertexts independent on the cryptosystems themselves.
+
+    All three of the potential schemes fit into NIST Category 1[3], which is equivalent to key-search for a 128bit key on AES.
+
+    Because of a more personal familiartiy with SIKE/SIDH, the existence of a constant time library[2] from Microsoft, and it being of a differing hardness problem than the proposed "RebelAlliance Handshake"[4], we've taken a stab at implementations using both the ephemeral DH and KEM protocols.
+
+    These implementations aim to provide a transitional quantum-secure handshake laid out in paper SWZ15[5]: authentication is provided by the existing classical keys and quantum bits are inlaid along classical bits into the KDF. This construction allows the produced shared secret to degrade down to whatever classical security is provided by the implemented cryptosystem if the QC KEM is attacked.
+
+=====
+
+  SIKE and SIDH
+
+  Disclaimer: I'm bad at math; if you're math orientated FJP11[6] and GV17[7] will be better for you. This is just going to be the layman's edition.
+
+  An isogeny is function that maps points and the group homomorphism from one elliptic curve E1 to another curve E2. We can form an enormous supersingular elliptic curve (of a specific type with certain quality isognies) Ramunajuan graph connected by these isogenous functions. Given a starting point, Alice travels between curves using isogenies that have a specific degree, recording the pathway she takes. Bob does the same, but with isogenies of a different degree. Bob and Alice then swap the final curve they've ended up on and travel along the same pathway they took originally. Alice and Bob then end up on curves that have the same j-invariant, which can then be fed into a KDF type function for use as shared secret.
+
+  Essentially this is a random walk and it's quantum-hard to determine the pathway Alice/Bob takes from a starting point to a final curve.
+
+=====
+
+  HANDSHAKE DETAILS
+
+  public/secret values are uppercase/lowercase respectively.
+  "|" denotes concatenation. 
+
+  A. ntor_sidh:
+    Handshake details:
+
+    PROTOID "ntor-sidh-shake256-1"
+
+    RID, RKEY := router_id, router_key
+    x, X := x25519_keygen()
+    a, A := sidh_alice_keygen()
+    
+    DATA = RID | RKEY | X | A 
+
+    CLIENT ---DATA---> 
+      
+      y, Y := x25519_keygen()
+      b, B := sidh_bob_keygen()
+
+      SI = DH(y, X) | DH(rkey, X) | DH_B(b, A) | PROTOID | X | Y | A | B
+      V = SHAKE256(SI | PROTOID ":verify", DIGEST256_LEN)
+      AI = V | rid | RKEY | X | Y | A | B | PROTOID | "Server"
+      AUTH_C = SHAKE256(AI | PROTOID ":mac", DIGEST256_LEN)
+      KEY = SHAKE256(SI | PROTOID ":expand", DIGEST256_LEN)
+
+      DATA = Y | B | AUTH_C
+
+    <---DATA--- SERVER
+
+    SI = DH(x, Y) | DH(x, RKEY) | DH_A(a, B) | PROTOID | X | Y | A | B
+    V = SHAKE256(SI | PROTOID ":verify", DIGEST256_LEN)
+    AI = V | rid | RKEY | X | Y | A | B | PROTOID | "Server"
+    AUTH = SHAKE256(AI | PROTOID ":mac", DIGEST256_LEN)
+    iff AUTH_C == AUTH:
+      KEY = SHAKE256(SI | PROTOID ":expand", KEY_LEN)
+    
+  B. ntor_sike:
+    Handhake Details:
+      * We've implemented the specified handshake in SWZ15 as ntor_sike.
+
+    PROTOID = "hybrid-x25519-sike-shake128-1"
+  
+    RID, RKEY := router_id, router_key
+    x, X := x25519_keygen()
+    a, A := sike_keygen()
+
+    DATA = RID | RKEY | X | A
+
+    CLIENT ---DATA--->
+
+      y, Y := x25519_keygen()
+      s, C := sike_encapsulate(A)
+
+      SI = SHAKE128(DH(rkey, X), DIGEST256_LEN) | DH(y, X) | s
+      SA = rid | RKEY | X | A
+      SEED = SHAKE128(SA | SI, DIGEST256_LEN)
+      V = SHAKE128(SEED | PROTOID ":auth", DIGEST256_LEN)
+      T = rid | RKEY | X | Y | A | C | PROTOID
+      AUTH_C = SHAKE128(V | T, DIGEST256_LEN)
+      KEY = SHAKE128(SEED | PROTOID ":key", KEY_LEN)
+
+      DATA = Y | C | AUTH_C
+
+    <---DATA--- SERVER
+
+    s := sike_decapsulate(C, a)
+
+    SI = SHAKE128(DH(x, RKEY), DIGEST256_LEN) | DH(x, Y) | s
+    SA = rid | RKEY | X | A
+    SEED = SHAKE128(SA | SI, DIGEST256_LEN)
+    V = SHAKE128(SEED | PROTOID ":auth", DIGEST256_LEN)
+    T = rid | RKEY | X | Y | A | C | PROTOID
+    AUTH = SHAKE128(V | T, DIGEST256_LEN)
+    iff AUTH_C == AUTH:
+      KEY = SHAKE128(SI | PROTOID ":expand", KEY_LEN)
+
+=====
+
+  BENCHMARKS
+
+  NOTE: We're using the portable C version for these tests; there are far faster implementations that can be found on the internet (8.5x speedup for an ASM version). These aren't benchmarked here sadly as my machine isn't new enough to have those instruction sets. 
+
+  Benchmarks have been added to the src/test/bench.c script. We have the following results (on my 7~ year old machine):
+
+  ===== onion_TAP =====
+  Client-side, part 1: 387.838957 usec.
+  Server-side, key guessed right: 961.199229 usec
+  Server-side, key guessed wrong: 1255.362244 usec.
+  Client-side, part 2: 328.505840 usec.
+  ===== onion_ntor =====
+  Ed25519-based basepoint multiply = disabled.
+  Client-side, part 1: 101.024866 usec.
+  Server-side: 314.347633 usec
+  Client-side, part 2: 213.073670 usec.
+  Ed25519-based basepoint multiply = enabled.
+  Client-side, part 1: 30.275224 usec.
+  Server-side: 244.509940 usec
+  Client-side, part 2: 212.910207 usec.
+  ===== onion_ntor_sidh =====
+  Client-side, part 1: 46247.331563 usec.
+  Server-side: 93866.690982 usec
+  Client-side, part 2: 37931.454518 usec.
+  ===== onion_ntor_sike =====
+  Client-side, part 1: 51831.942805 usec.
+  Server-side: 84257.178059 usec
+  Client-side, part 2: 90722.976395 usec.
+
+  This is very bad. We can do 90/115 TAP handshakes in the time it takes to do 1 SIDH/1 SIKE handshake.
+  Even worse, it's 366/466 ntor handshakes for 1 SIDH/1 SIKE.
+
+  In order to speed this up, we're going to have napkin math the projected speed from the ASM implementation. With numbers taken from the SIKE NIST submission, we can expect an 8.5x~ speedup with the ASM implementation, giving us 13~ TAPs and 55~ ntor's per SIKE handshake. A lot better, but still pretty bad and more than likely not usable. That being said, I'm no tor-network guru and there's probably metric data out there that could better illuminate a slowdown.
+
+  Beyond ASM code, another possibility is to pre-generate/reuse keys for the SIKE construction (SIDH is vulnerable to key-reuse attacks); as we're looking at more drop-in stuff, I've not explored this option. If we went down this path, we'd likely want to put keys/publish them in the router_info.
+
+=====
+
+  CLOSING
+
+  Tor needs to move to larger CREATE cells; while SIKE is promising for low bandwidth environments, the amount of CREATEs needed to build tor's telescoping circuits requires too much processing power (if using SIKE) to not negatively impact the network. That being said, if mathematical advances lead to faster libraries or implementations, SIKE should 100% be revisited; the RebelAlliance handshake isn't perfect, requiring 4x as much network bandwidth to function and will definitley negatively impact the network in a diffferent way.
+
+  In terms of implementation (tor specific) details, this SIKE construction isn't the best. If anything, SWZ's construction should be implemented in such a manner that the KEM is abstracted and passed as a structure with a bunch of function pointers (or something). This opens up easy integrations of additional KEMs if tor somehow(?) gets into multiple pq handshakes; specifically if a KEM is attacked, one can easily transition to another one with one or two line code changes. If you're interested in what I think that would look like, I would grok how tor handles the ref/donna ed25519 code.
+
+  Apart from that, there's potential for speedups with reusing keys; I'm more than likely going to attempt the above more generalized, abstracted SWZ construction with runtime/compile time KEM choosing, and I'll definitley look if key-reuse is something that's possible.
+
+  If we're going to delve into actual deployments for this specific patch, the onion.c handshake code needs to be refactored/rewritten; tor calculates how long it would take to drain tap/ntor if you accepted a tap/ntor shake and the complexity of these calculations skyrockets if you've got 4, 5, or 6 different handshakes. I've sort of duplicated code (should 100% be surgically removed), commented on where there would be problem areas, and just added more case statements that provide a skeleton for an actual deployment, but that's not going to cut it. Since I don't think this will make it into production, we'll just ignore it. It's going to have to be redone anyway! 
+
+=====
+
+Bibliography:
+  [1] Scheme benchmarks: https://drive.google.com/file/d/1g-l0bPa-tReBD0Frgnz9aZXpO06PunUa/view
+  [2] Microsoft's PQCrypto-SIKE: https://github.com/Microsoft/PQCrypto-SIKE
+  [3] NIST Section 4.A: https://csrc.nist.gov/projects/post-quantum-cryptography/post-quantum-cryptography-standardization/evaluation-criteria/security-(evaluation-criteria)
+  [4] RebelAlliance Proposal270: https://gitweb.torproject.org/torspec.git/tree/proposals/270-newhope-hybrid-handshake.txt
+  [5] SWZ15: https://eprint.iacr.org/2015/287.pdf
+  [6] FJP11: https://eprint.iacr.org/2011/506.pdf
+  [7] GV17: https://eprint.iacr.org/2017/774.pdf

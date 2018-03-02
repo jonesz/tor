@@ -1,0 +1,10 @@
+This is the optimized/portable SIKEp503 implementation provided by Microsoft Research.
+
+As of writing, we're not integrating this into the build system very yet, but if you ever wanted to do that you could:
+  hook it into the massive tor configure/build script.
+  include the x64 assembly code, which you probably need to make SIKE usable in production.
+
+CHANGES:
+  Added api_tor.h; the processor/compilation stuff in config.h has yet to be hooked into the build system, we don't necessarily need to be #including it when we've built the library already, afaik.
+  Some disgusting hack where we've changed the function declarations of fips202.c, so it doesn't collide with tor's libkeccak. 
+    - SIKE should just reference to this code instead of redefining it?

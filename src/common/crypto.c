@@ -2201,6 +2201,17 @@ crypto_xof_new(void)
   return xof;
 }
 
+/* Same as above, but 128. XXX: These should be smashed together and pivot
+ * on an int or something. */
+crypto_xof_t *
+crypto_xof128_new(void)
+{
+  crypto_xof_t *xof;
+  xof = tor_malloc(sizeof(crypto_xof_t));
+  keccak_xof_init(&xof->s, 128);
+  return xof;
+}
+
 /** Absorb bytes into a XOF object.  Must not be called after a call to
  * crypto_xof_squeeze_bytes() for the same instance, and will assert
  * if attempted.

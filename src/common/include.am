@@ -1,4 +1,3 @@
-
 noinst_LIBRARIES += \
 	src/common/libor.a \
 	src/common/libor-ctime.a \
@@ -48,6 +47,9 @@ endif
 
 LIBDONNA += $(LIBED25519_REF10)
 LIBDONNA += $(LIBED25519_DONNA)
+
+LIBSIKE=src/ext/isogeny/sike/libsike.a
+
 
 if THREADS_PTHREADS
 threads_impl_source=src/common/compat_pthreads.c
@@ -123,7 +125,8 @@ LIBOR_CRYPTO_A_SRC = \
   src/common/crypto_format.c	\
   src/common/tortls.c		\
   src/common/crypto_curve25519.c \
-  src/common/crypto_ed25519.c
+  src/common/crypto_ed25519.c \
+  src/common/crypto_isogeny.c
 
 LIBOR_EVENT_A_SRC = \
 	src/common/compat_libevent.c \
@@ -145,6 +148,7 @@ src_common_libor_event_testing_a_CPPFLAGS = $(AM_CPPFLAGS) $(TEST_CPPFLAGS)
 src_common_libor_testing_a_CFLAGS = $(AM_CFLAGS) $(TEST_CFLAGS)
 src_common_libor_crypto_testing_a_CFLAGS = $(AM_CFLAGS) $(TEST_CFLAGS)
 src_common_libor_event_testing_a_CFLAGS = $(AM_CFLAGS) $(TEST_CFLAGS)
+
 
 COMMONHEADERS = \
   src/common/address.h				\
@@ -169,6 +173,7 @@ COMMONHEADERS = \
   src/common/crypto.h				\
   src/common/crypto_curve25519.h		\
   src/common/crypto_ed25519.h			\
+  src/common/crypto_isogeny.h \
   src/common/crypto_format.h			\
   src/common/crypto_pwbox.h			\
   src/common/crypto_s2k.h			\
@@ -192,4 +197,3 @@ COMMONHEADERS = \
   src/common/workqueue.h
 
 noinst_HEADERS+= $(COMMONHEADERS)
-
