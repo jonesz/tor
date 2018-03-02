@@ -2826,7 +2826,7 @@ extend_info_supports_ntor(const extend_info_t* ei)
 }
 
 /* Does ei support ntor_sidh? 
- * TODO: this needs to be hashed out. */
+ * XXX: this needs to be figured out. */
 int
 extend_info_supports_ntor_sidh(const extend_info_t* ei)
 {
@@ -2835,7 +2835,7 @@ extend_info_supports_ntor_sidh(const extend_info_t* ei)
 }
 
 /* Does ei support ntor_sike?
- * TODO: this needs to be hashed out. */
+ * XXX: this needs to be figured out. */
 int
 extend_info_supports_ntor_sike(const extend_info_t* ei)
 {
