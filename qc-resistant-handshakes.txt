@@ -32,6 +32,8 @@ Table of Contents:
 
   There's a few tests that can be run with `./src/test/test_ntor_isogeny.sh`, `./src/test/bench`, and just the general `./src/test/test`.
 
+  Specifically, the handshakes are in onion_ntor_sike.{c, h} and onion_ntor_sidh.{c, h}, but there's a bunch of more scaffolding/skeleton everywhere else. 
+
   Disclaimer: !- THIS CODE HAS HAD NO SECURITY AUDIT -! (nor quality audit!)
   Good luck!
   
