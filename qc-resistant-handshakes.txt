@@ -17,12 +17,12 @@ Table of Contents:
   BUILDING/PREAMBLE
 
   a: Before the main course, here's how to build this thing as I've not integrated SIKE into the build system. The reasons for doing so are:
-    1.There's definitley some duplicated code that needs to be pruned and remediated (SHA3, for example).
+    1. There's definitley some duplicated code that needs to be pruned and remediated (SHA3, for example).
     2. Some architecture specific stuff (src/ext/isogeny/config.h) exists in the isogeny library; I'm sure the same stuff exists in tor when building donna, siphash, whatever.
        This needs to be reconciled; when tor supports a _large_ pool of architectures, SIKE should probably support them aswell.
-    3. It simply wasn't the goal of this project. If I was intent on trying to deploy this, I'd definitley stick it in there, but this is more PoC.
+    3. Results from benchmarking make me less inclined to deploy this project; see more in closing, but we probably want a more abstracted interface to plug in KEMs than this.
 
-  Won't build on Windows (didn't mess with the .nmake(?) files), have only tested on Linux.
+  Won't build on Windows afaik (didn't mess with the .nmake(?) files), have only tested on Linux.
 
   With all that being said, building can be done with:
     `cd ./src/ext/isogeny`, `make`
@@ -32,14 +32,14 @@ Table of Contents:
 
   There's a few tests that can be run with `./src/test/test_ntor_isogeny.sh`, `./src/test/bench`, and just the general `./src/test/test`.
 
-  Disclaimer: !- THIS CODE HAS HAD NO SECURITY AUDIT -!
+  Disclaimer: !- THIS CODE HAS HAD NO SECURITY AUDIT -! (nor quality audit!)
   Good luck!
   
 =====
 
   INTRODUCTION
 
-  The currently implemented tor handshake (ntor) provides no post-quantum security. While there's no feasible way to attack and decrypt messages sent today, a powerful actor can record encrypted messages now and decrypt them in the future with a procured quantum computer. To thwart this attack, we've examined schemes submitted to NIST and provided two implementations (isogeny based) that provide a theorized post-quantum security. These handshake implementations can be deployed today and require no major changes to the foundational aspects of the tor network. In addition, we benchmark them, analyze the ease of integrating them into circuit creation, and provide information as to what needs to be done in the future.
+  The currently implemented tor handshake (ntor) provides no post-quantum security. While there's no feasible way to attack and decrypt messages sent today, a powerful actor can record encrypted messages today and decrypt them in the future with a procured quantum computer. To thwart this attack, we've examined schemes submitted to NIST and provided two implementations (isogeny based) that provide a theorized post-quantum security. These handshake implementations can be deployed today and require no major changes to the foundational aspects of the tor network. In addition, we benchmark them, analyze the ease of integrating them into circuit creation, and provide information as to what needs to be done in the future.
 
 =====
 
@@ -47,7 +47,7 @@ Table of Contents:
 
   With NIST's competition's submission stage closing, we are provided with 80~ or so schemes to choose from. Our requirements for a more drop-in replacement are:
     a. The total construction (whether that be KEM only, KEM+existing ntor, or a modification to ntor) must fit inside existing tor CREATE cells: < 505 bytes.
-      i. NOTE: this will soon be obsolete with bigger create cells! That being said, we should be aiming for as small key-sizes as possible to prevent reducing the total network throughput for actual encrypted messages. There should be some napkin math out there concerning this and detailing how much "real data" we'd lose if we added X-bytes to every create cell.
+      i. NOTE: this will soon be obsolete with bigger create cells! That being said, we should be aiming for as small key-sizes as possible to prevent reducing the total network throughput for _actual_ messages. There should be some napkin math out there concerning this and detailing how much "real data" we'd lose if we added X-bytes to every create cell.
     b. The targeted construction should be as efficient as possible; in the past, one could prevent access/DDoS the tor network with the creation of costly TAP handshakes.
     c. Any other concerns surrounding the historical difficulty of the hardness problem, the quality of the implemented library, etc. 
 
@@ -56,7 +56,7 @@ Table of Contents:
     2. LAKE-I. Code-based (ideal LRPC codes).
     3. Round2. Lattice-based. Multiple variants. (Additionally, there's a flaw in the proof of the IND-CPA security).
 
-    NOTE: We haven't considered compression techniques that could act upon public-keys/ciphertexts independent on the cryptosystems themselves.
+    NOTE: We haven't considered compression techniques that could act upon public-keys/ciphertexts independent on the cryptosystems themselves; there's a SIDH-fork that reduces everything down to 330~ bytes, but I believe(?) it slows down everything by half.
 
     All three of the potential schemes fit into NIST Category 1[3], which is equivalent to key-search for a 128bit key on AES.
 
@@ -72,7 +72,18 @@ Table of Contents:
 
   An isogeny is function that maps points and the group homomorphism from one elliptic curve E1 to another curve E2. We can form an enormous supersingular elliptic curve (of a specific type with certain quality isognies) Ramunajuan graph connected by these isogenous functions. Given a starting point, Alice travels between curves using isogenies that have a specific degree, recording the pathway she takes. Bob does the same, but with isogenies of a different degree. Bob and Alice then swap the final curve they've ended up on and travel along the same pathway they took originally. Alice and Bob then end up on curves that have the same j-invariant, which can then be fed into a KDF type function for use as shared secret.
 
-  Essentially this is a random walk and it's quantum-hard to determine the pathway Alice/Bob takes from a starting point to a final curve.
+  Essentially this is a random walk and it's quantum-hard to determine the pathway Alice/Bob takes from a starting point to a final curve. 
+  That's the no-frills, tell your mom about it edition; it's not completely accurate.
+
+  The Formal Key Exchange method (still not completely accurate):
+
+  We define some starting system parameters: E_0 (starting curve) and bases {P_A, Q_A} and {P_B, Q_B}. Alice chooses two random, secret scalars m_A and n_A to caculate an isogeny phi_A: E_O -> E_A with kernel K_A := <[m_A]P_A + [n_A]Q_A>. Alice computes {phi_A(P_B), phi_A(Q_B)} and sends them to Bob with E_A. 
+
+  Bob does the same, choosing his own secret scalars and computing a secret isogeny phi_B. He then transfers over E_B and {phi_B(P_A), phi_B(Q_A)}.
+
+  Alice then computes phi'_A: E_B -> E_AB with a kernel equal to <[m_A]phi_B(P_A) + [m_N]phi_B(Q_A)>. Bob the computes phi'_B...
+
+  We end up on E_AB which has the same j-invariant, which can be used to calculate the key.
 
 =====
 
