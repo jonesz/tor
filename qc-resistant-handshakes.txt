@@ -87,6 +87,8 @@ Table of Contents:
 
   We end up on E_AB which has the same j-invariant, which can be used to calculate the key.
 
+  And there you have it, SIKE and SIDH! Beyond this, SIKE does a little bit of extra-computation to turn SIDH into a CCA secure cryptosystem.
+
 =====
 
   HANDSHAKE DETAILS
@@ -203,7 +205,7 @@ Table of Contents:
 
   In order to speed this up, we're going to have napkin math the projected speed from the ASM implementation. With numbers taken from the SIKE NIST submission, we can expect an 8.5x~ speedup with the ASM implementation, giving us 13~ TAPs and 55~ ntor's per SIKE handshake. A lot better, but still pretty bad and more than likely not usable. That being said, I'm no tor-network guru and there's probably metric data out there that could better illuminate a slowdown.
 
-  Beyond ASM code, another possibility is to pre-generate/reuse keys for the SIKE construction (SIDH is vulnerable to key-reuse attacks); as we're looking at more drop-in stuff, I've not explored this option. If we went down this path, we'd likely want to put keys/publish them in the router_info.
+  Beyond ASM code, another possibility is to pre-generate/reuse keys for the SIKE construction (SIKE is CCA-secure, SIDH is vulnerable to key-reuse attacks); as we're looking at more drop-in stuff, I've not explored this option. If we went down this path, we'd likely want to put keys/publish them in the router_info.
 
 =====
 
@@ -213,7 +215,7 @@ Table of Contents:
 
   In terms of implementation (tor specific) details, this SIKE construction isn't the best. If anything, SWZ's construction should be implemented in such a manner that the KEM is abstracted and passed as a structure with a bunch of function pointers (or something). This opens up easy integrations of additional KEMs if tor somehow(?) gets into multiple pq handshakes; specifically if a KEM is attacked, one can easily transition to another one with one or two line code changes. If you're interested in what I think that would look like, I would grok how tor handles the ref/donna ed25519 code.
 
-  Apart from that, there's potential for speedups with reusing keys; I'm more than likely going to attempt the above more generalized, abstracted SWZ construction with runtime/compile time KEM choosing, and I'll definitley look if key-reuse is something that's possible.
+  Apart from that, there's potential for speedups with reusing keys; I'm more than likely going to attempt the above more generalized, abstracted SWZ construction with runtime/compile time KEM choosing, and I'll definitely look if key-reuse is something that's possible (if we're going to use SIKE over SIDH, we should definitley take advantage of the CCA security.)
 
   If we're going to delve into actual deployments for this specific patch, the onion.c handshake code needs to be refactored/rewritten; tor calculates how long it would take to drain tap/ntor if you accepted a tap/ntor shake and the complexity of these calculations skyrockets if you've got 4, 5, or 6 different handshakes. I've sort of duplicated code (should 100% be surgically removed), commented on where there would be problem areas, and just added more case statements that provide a skeleton for an actual deployment, but that's not going to cut it. Since I don't think this will make it into production, we'll just ignore it. It's going to have to be redone anyway! 
 
