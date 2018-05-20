@@ -268,7 +268,7 @@ write_secret_key(const ed25519_secret_key_t *key, int encrypted,
  * secret key unless no public key is found.  Do not return a secret key. (but
  * create and save one if needed).
  *
- * If INIT_ED_KEY_NO_LOAD_SECRET is set in <b>flags</b>, don't try to load
+ * If INIT_ED_KEY_OFFLINE_SECRET is set in <b>flags</b>, don't try to load
  * a secret key, no matter what.
  *
  * If INIT_ED_KEY_TRY_ENCRYPTED is set, we look for an encrypted secret key
