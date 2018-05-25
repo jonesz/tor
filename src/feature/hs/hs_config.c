@@ -294,7 +294,7 @@ static int
 config_service_v3(const config_line_t *line_,
                   hs_service_config_t *config)
 {
-  int have_num_ip = 0;
+  int have_num_ip = 0; int have_offline_keys = 0;
   bool export_circuit_id = false; /* just to detect duplicate options */
   const char *dup_opt_seen = NULL;
   const config_line_t *line;
@@ -332,7 +332,19 @@ config_service_v3(const config_line_t *line_,
         goto err;
       }
       export_circuit_id = true;
-      continue;
+    }
+
+    /* Cryptographic keys are kept offline. */
+    if (!strcasecmp(line->key, "HiddenServiceOfflineKeys")) {
+      config->offline_keys =
+        (unsigned int) helper_parse_uint64(line->key, line->value, 0, 1, &ok);
+      if (!ok || have_offline_keys) {
+        if (have_offline_keys) {
+          dup_opt_seen = line->key;
+        }
+        goto err;
+      }
+      have_offline_keys = 1;
     }
   }
 

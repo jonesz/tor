@@ -2935,6 +2935,13 @@ The following options are used to configure a hidden service.
     including setting SOCKSPort to "0". Can not be changed while tor is
     running. (Default: 0)
 
+[[HiddenServiceOfflineKeys]] **HiddenServiceOfflineKeys** **0**|**1**::
+    When this option is enabled, a Tor hidden service will search for
+    pre-generated cryptographic keys to use. (Default: 0)
+
+    **WARNING:** Once the key pool is exhausted (and not resupplied), the
+    HiddenService will cease to function.
+
 Client Authorization
 --------------------
 
