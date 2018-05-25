@@ -222,6 +222,10 @@ typedef struct hs_service_config_t {
 
   /* Does this service export the circuit ID of its clients? */
   hs_circuit_id_protocol_t circuit_id_protocol;
+
+  /* Does this service have offline cryptographic keys? */
+  unsigned int offline_keys : 1;
+
 } hs_service_config_t;
 
 /* Service state. */
