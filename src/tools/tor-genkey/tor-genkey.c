@@ -22,12 +22,13 @@ typedef struct {
   /* v3 hidden service master keypair. */
   int hs3_gen_master_keypair;
   int hs3_existing_secret;
+  char *hs3_existing_secret_fname;
 
   /* v3 hidden service offline key. */
   int hs3_gen_offline_keys;
   uint64_t curr_time_period;
   uint64_t time_period;
-  unsigned int num_keys;
+  unsigned long num_keys;
 } options_s;
 
 static int
@@ -59,7 +60,7 @@ parse_options(int argc, char **argv, options_s *s)
         fprintf(stderr, "No argument to -pt.\n");
         return -1;
       }
-      /* XXX: What happens if you fuck this up? */
+      /* XXX: What happens if you screw this up? */
       s->time_period = tor_parse_uint64(argv[i+1], 10, 0, UINT64_MAX, NULL, NULL);
       i++;
     } else if (!strcmp(argv[i], "-ct")) {
@@ -67,11 +68,25 @@ parse_options(int argc, char **argv, options_s *s)
         fprintf(stderr, "No argument to -ct.\n");
         return -1;
       }
-      /* XXX: What happens if you fuck this up? */
+      /* XXX: What happens if you screw this up? */
       s->curr_time_period = tor_parse_uint64(argv[i+1], 10, 0, UINT64_MAX, NULL, NULL);
       i++;
-    } else {
-
+    } else if (!strcmp(argv[i], "-l")) {
+      if (i+1>=argc) {
+        fprintf(stderr, "No argument to -l.\n");
+        return -1;
+      }
+      s->hs3_existing_secret = 1;
+      s->hs3_existing_secret_fname = argv[i+1];
+      i++;
+    } else if (!strcmp(argv[i], "-n")) {
+      if (i+1>= argc) {
+        fprintf(stderr, "No argument to -n.\n");
+        return -1;
+      }
+      /* XX: What happens if you screw this up? */
+      s->num_keys = tor_parse_ulong(argv[i+1], 10, 0, ULONG_MAX, NULL, NULL);
+      i++;
     }
   }
   return 0;
@@ -95,7 +110,7 @@ validate_options(options_s *s)
       return -1;
     }
     if (!s->curr_time_period) {
-        /* XXX: We should grab the current time period from consensus. */
+        /* XXX: We could grab the current time period from consensus. */
         fprintf(stderr, "Can't generate offline keys without knowing the current "
             "time period.\n");
         return -1;
@@ -105,6 +120,14 @@ validate_options(options_s *s)
       return -1;
     }
   }
+  if (s->hs3_gen_master_keypair && s->hs3_existing_secret) {
+    fprintf(stderr, "Can't generate a new master keypair and load an existing secret.\n");
+    return -1;
+  }
+  if (s->num_keys == 0) {
+    fprintf(stderr, "Can't generate less than 1 offline key.\n");
+    return -1;
+  }
   return 0;
 }
 
@@ -112,7 +135,8 @@ static void
 show_help(void)
 {
     fprintf(stderr, "tor-genkey: [-h|--help] [-v|--verbose] -g {hs3master, hs3offline}"
-        " -pt {projected time period} -ct {current time period}\n");
+        " -l {existing_secret} -pt {projected time period} -ct {current time period}"
+        " -n {num_keys}\n");
 }
 
 int
@@ -176,8 +200,20 @@ main(int argc, char **argv)
         "hs_ed25519_public_key",
         "type0");
   } else if (s.hs3_existing_secret) {
-    /* XXX: load a master keypair. */
-
+    char *tag = NULL;
+    if (ed25519_seckey_read_from_file(&secrets.master.seckey, &tag,
+          s.hs3_existing_secret_fname) < 0) {
+      fprintf(stderr, "Couldn't load existing secret.\n");
+      tor_free(tag);
+      goto done;
+    }
+    tor_free(tag);
+    ed25519_public_key_generate(&secrets.master.pubkey, &secrets.master.seckey);
+    /* We're writing the master keypair here; the service still tries to load
+     * the master pubkey (even if we don't necessarily need it?). */
+    ed25519_pubkey_write_to_file(&secrets.master.pubkey,
+        "hs_ed25519_public_key",
+        "type0");
   }
 
   if (s.hs3_gen_offline_keys) {
@@ -233,5 +269,6 @@ main(int argc, char **argv)
 
 done:
   memset(&s, 0, sizeof(s));
+  memset(&secrets, 0, sizeof(secrets));
   return ret;
 }
