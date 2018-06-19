@@ -1052,11 +1052,11 @@ load_offline_keys(const hs_service_t *service, hs_service_descriptor_t *desc,
    * logs. */
   if (!kp) {
     log_warn(LD_REND, "Unable to load a blinded key from %s. Failing", fname);
-    ret = -1;
     goto end;
   }
 
-  /* Make sure that our public key isn't just zero'd memory. */
+  /* Make sure that our public key isn't just zero'd memory.
+   * XXX: Will ed_key_init... fail if it's zero'd memory? */
   tor_assert(!tor_mem_is_zero((char *) &kp->pubkey, ED25519_PUBKEY_LEN));
   memcpy(&desc->blinded_kp.pubkey, &kp->pubkey, ED25519_PUBKEY_LEN);
 
@@ -1079,17 +1079,18 @@ load_offline_keys(const hs_service_t *service, hs_service_descriptor_t *desc,
   if (!kp) {
     log_warn(LD_REND, "Unable to load a descriptor keypair/certificate from "
         "%s. Failing", fname);
-    ret = -1;
     goto end;
   }
 
-  /* Make sure that the descriptor keypair isn't zero'd memory. */
+  /* Make sure that the descriptor keypair isn't zero'd memory. 
+   * XXX: Will ed_key_init... fail if it's zero'd memory? */
   tor_assert(!tor_mem_is_zero((char *) &kp->pubkey, ED25519_PUBKEY_LEN));
   tor_assert(!tor_mem_is_zero((char *) &kp->seckey, ED25519_SECKEY_LEN));
   memcpy(&desc->signing_kp.pubkey, &kp->pubkey, ED25519_PUBKEY_LEN);
   memcpy(&desc->signing_kp.seckey, &kp->seckey, ED25519_SECKEY_LEN);
 
   ret = 0;
+
  end:
   tor_free(fname);
   tor_free(fname_suffix);
