@@ -62,6 +62,7 @@
 #include "geoip.h"
 #include "hibernate.h"
 #include "hs_cache.h"
+#include "hs_client.h"
 #include "hs_common.h"
 #include "hs_control.h"
 #include "main.h"
@@ -4384,9 +4385,13 @@ handle_control_hsfetch(control_connection_t *conn, uint32_t len,
   smartlist_t *args = NULL, *hsdirs = NULL;
   (void) len; /* body is nul-terminated; it's safe to ignore the length */
   static const char *hsfetch_command = "HSFETCH";
+  hostname_type_t addr_type;
   static const char *v2_str = "v2-";
   const size_t v2_str_len = strlen(v2_str);
+  static const char *v3_str = "v3-";
+  const size_t v3_str_len = strlen(v3_str);
   rend_data_t *rend_query = NULL;
+  ed25519_public_key_t key_out;
 
   /* Make sure we have at least one argument, the HSAddress. */
   args = getargs_helper(hsfetch_command, conn, body, 1, -1);
@@ -4396,8 +4401,9 @@ handle_control_hsfetch(control_connection_t *conn, uint32_t len,
 
   /* Extract the first argument (either HSAddress or DescID). */
   arg1 = smartlist_get(args, 0);
-  /* Test if it's an HS address without the .onion part. */
+  /* Test if it's a V2 HS address without the .onion part. */
   if (rend_valid_v2_service_id(arg1)) {
+    addr_type = ONION_V2_HOSTNAME;
     hsaddress = arg1;
   } else if (strcmpstart(arg1, v2_str) == 0 &&
              rend_valid_descriptor_id(arg1 + v2_str_len) &&
@@ -4405,7 +4411,12 @@ handle_control_hsfetch(control_connection_t *conn, uint32_t len,
                            REND_DESC_ID_V2_LEN_BASE32) == 0) {
     /* We have a well formed version 2 descriptor ID. Keep the decoded value
      * of the id. */
+    addr_type = ONION_V2_HOSTNAME;
     desc_id = digest;
+  /* Test if it's a V3 HS address without the .onion part. */
+  } else if (hs_address_is_valid(arg1)) {
+    addr_type = ONION_V3_HOSTNAME;
+    hsaddress = arg1;
   } else {
     connection_printf_to_buf(conn, "513 Invalid argument \"%s\"\r\n",
                              arg1);
@@ -4442,30 +4453,47 @@ handle_control_hsfetch(control_connection_t *conn, uint32_t len,
     }
   }
 
-  rend_query = rend_data_client_create(hsaddress, desc_id, NULL,
+  if (addr_type == ONION_V2_HOSTNAME) {
+    rend_query = rend_data_client_create(hsaddress, desc_id, NULL,
                                        REND_NO_AUTH);
-  if (rend_query == NULL) {
-    connection_printf_to_buf(conn, "551 Error creating the HS query\r\n");
-    goto done;
-  }
+    if (rend_query == NULL) {
+      connection_printf_to_buf(conn, "551 Error creating the HS query\r\n");
+      goto done;
+    }
 
-  /* Using a descriptor ID, we force the user to provide at least one
-   * hsdir server using the SERVER= option. */
-  if (desc_id && (!hsdirs || !smartlist_len(hsdirs))) {
+    /* Using a descriptor ID, we force the user to provide at least one
+     * hsdir server using the SERVER= option. */
+    if (desc_id && (!hsdirs || !smartlist_len(hsdirs))) {
       connection_printf_to_buf(conn, "512 %s option is required\r\n",
                                opt_server);
       goto done;
+    }
+
+    /* We are about to trigger HSDir fetch so send the OK now because after
+     * that 650 event(s) are possible so better to have the 250 OK before them
+     * to avoid out of order replies. */
+     send_control_done(conn);
+
+    /* Trigger the fetch using the built rend query and possibly a list of HS
+     * directory to use. This function ignores the client cache thus this will
+     * always send a fetch command. */
+     rend_client_fetch_v2_desc(rend_query, hsdirs);
+
+  } else if (addr_type == ONION_V3_HOSTNAME) {
+    /* Generate the public key from the passed onion address. */
+    if (hs_parse_address(arg1, &key_out, NULL, NULL) < 0) {
+      /* This should never fail, as we already validated the address
+       * before. */
+      log_warn(LD_BUG, "Failed to parse %s.onion", hsaddress);
+      goto done;
+    }
+
+    /* We're using the same logic as above, send the OK to avoid out of
+     * order replies, then send the fetch. We do no check on the resulting
+     * success of the fetch, like above. */
+    send_control_done(conn);
+    hs_client_refetch_hsdesc(&key_out);
   }
-
-  /* We are about to trigger HSDir fetch so send the OK now because after
-   * that 650 event(s) are possible so better to have the 250 OK before them
-   * to avoid out of order replies. */
-  send_control_done(conn);
-
-  /* Trigger the fetch using the built rend query and possibly a list of HS
-   * directory to use. This function ignores the client cache thus this will
-   * always send a fetch command. */
-  rend_client_fetch_v2_desc(rend_query, hsdirs);
 
  done:
   SMARTLIST_FOREACH(args, char *, cp, tor_free(cp));
@@ -4473,6 +4501,7 @@ handle_control_hsfetch(control_connection_t *conn, uint32_t len,
   /* Contains data pointer that we don't own thus no cleanup. */
   smartlist_free(hsdirs);
   rend_data_free(rend_query);
+  memwipe(&key_out, 0, sizeof(key_out));
  exit:
   return 0;
 }
