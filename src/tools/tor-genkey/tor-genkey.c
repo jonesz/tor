@@ -84,7 +84,7 @@ parse_options(int argc, char **argv, options_s *s)
         fprintf(stderr, "No argument to -n.\n");
         return -1;
       }
-      /* XX: What happens if you screw this up? */
+      /* XXX: What happens if you screw this up? */
       s->num_keys = tor_parse_ulong(argv[i+1], 10, 0, ULONG_MAX, NULL, NULL);
       i++;
     }
@@ -102,21 +102,20 @@ validate_options(options_s *s)
           "or generating a new master keypair.\n");
       return -1;
     }
-    if (!s->time_period) {
-        /* XXX: We should allow the user to specify dates, not just
-         * time periods. */
-      fprintf(stderr, "Can't generate offline keys without having a valid "
-          "time period.\n");
-      return -1;
-    }
     if (!s->curr_time_period) {
-        /* XXX: We could grab the current time period from consensus. */
-        fprintf(stderr, "Can't generate offline keys without knowing the current "
-            "time period.\n");
-        return -1;
+      /* if no time period is passed as the current time period, 
+       * calculate our own. */
+      time_t now;
+      time(&now);
+      s->curr_time_period = hs3_calculate_time_period(now);
+    }
+    if (!s->time_period) {
+      /* if no time period is selected to generate for, just calculate for 
+       * current_time_period += 1. */
+      s->time_period = s->curr_time_period + 1;
     }
     if (s->curr_time_period >= s->time_period) {
-      fprintf(stderr, "Can't only generate future keys.\n");
+      fprintf(stderr, "Can't generate future keys.\n");
       return -1;
     }
   }

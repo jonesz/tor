@@ -9,8 +9,14 @@
   (HS_KEYBLIND_NONCE_PREFIX_LEN + sizeof(uint64_t) + sizeof(uint64_t))
 #define HS_TIME_PERIOD_LENGTH_DEFAULT 1440 /* 1440 minutes == one day */
 
+/* The default for this is 1 hour, looking through confparse,
+ * it's multiplied by a unit multiplier of 60 * 60. */
+#define HS_DEFAULT_V3_AUTH_INTERVAL (1 * 60 * 60)
+#define SHARED_RANDOM_N_ROUNDS 12
+
 void hs3_blind(ed25519_keypair_t *kp, const uint8_t *secret, size_t secret_len,
     uint64_t period_num, ed25519_keypair_t *blinded_kp_out);
+uint64_t hs3_calculate_time_period(time_t time);
 
 #define HS_DESC_CERT_LIFETIME (54 * 60 * 60)
 #define SIGNED_KEY_TYPE_ED25519 0x01

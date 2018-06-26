@@ -65,7 +65,25 @@ hs3_blind(ed25519_keypair_t *kp, const uint8_t *secret, size_t secret_len,
   memwipe(param, 0, sizeof(param));
 }
 
+/* Calculate the current time period; makes no calls out
+ * to the network. */
+uint64_t 
+hs3_calculate_time_period(time_t now)
+{
+  uint64_t time_period_num;
 
+  uint64_t time_period_length = HS_TIME_PERIOD_LENGTH_DEFAULT;
+  uint64_t minutes_since_epoch = now / 60;
+
+  unsigned int time_period_rotation_offset = SHARED_RANDOM_N_ROUNDS *
+    HS_DEFAULT_V3_AUTH_INTERVAL;
+  time_period_rotation_offset /= 60;
+  minutes_since_epoch -= time_period_rotation_offset;
+  time_period_num = minutes_since_epoch / time_period_length;
+  return time_period_num;
+}
+
+/* Parse a tor_cert_t. */
 static tor_cert_t *
 hs3_cert_parse(const uint8_t *encoded, const size_t len)
 {
@@ -103,6 +121,7 @@ hs3_cert_parse(const uint8_t *encoded, const size_t len)
   return cert;
 }
 
+/* Create a certificate. */
 tor_cert_t*
 hs3_cert_create(ed25519_keypair_t *signing_key, ed25519_public_key_t *signed_key,
     time_t lifetime, time_t now)
@@ -157,6 +176,7 @@ hs3_cert_create(ed25519_keypair_t *signing_key, ed25519_public_key_t *signed_key
   return hs3cert;
 }
 
+/* Free a certificate. */
 void
 hs3_cert_free(tor_cert_t *cert)
 {
