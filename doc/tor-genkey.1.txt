@@ -42,12 +42,13 @@ OPTIONS
   Attempts to load an ed25519 master secret key from the passed filename.
 
 **-ct** __CURRENT_TIME_PERIOD__::
-  Sets the current time period (needed by -g hs3offline). For more information, research Tor's
-  consensus/time periods in the third-generation Hidden Service spec.
+  Sets the current time period; if not set, *tor-genkey* will calculate the current time period. 
+  For more information, research Tor's consensus/time periods in the third-generation Hidden Service spec.
 
 **-pt** __PROJECTED_TIME_PERIOD__::
-  Sets the time period to begin key generation at (needed by -g hs3offline). For more information,
-  Research Tor's consensus/time periods in the third-generation Hidden Service spec.
+  Sets the time period to begin key generation at; if not set, *tor-genkey* will calculate the current
+  time period abd build keys for that value + 1.
+  For more information, research Tor's consensus/time periods in the third-generation Hidden Service spec.
 
 **-n** __NUM_KEYS__::
   The number of keys to generate (needed by -g hs3offline). Default: 15.
