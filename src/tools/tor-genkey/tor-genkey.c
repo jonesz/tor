@@ -249,11 +249,11 @@ main(int argc, char **argv)
       tor_free(fname);
 
       tor_asprintf(&fname, "hs_ed25519_descriptor_%" PRIu64 "_public_key", s.time_period + i);
-      ed25519_pubkey_write_to_file(&secrets.descriptor.pubkey, fname, "type0");
+      ed25519_pubkey_write_to_file(&secrets.descriptor.pubkey, fname, "type8");
       tor_free(fname);
 
       tor_asprintf(&fname, "hs_ed25519_descriptor_%" PRIu64 "_secret_key", s.time_period + i);
-      ed25519_seckey_write_to_file(&secrets.descriptor.seckey, fname, "type0");
+      ed25519_seckey_write_to_file(&secrets.descriptor.seckey, fname, "type8");
       tor_free(fname);
 
       tor_asprintf(&fname, "hs_ed25519_descriptor_%" PRIu64 "_cert", s.time_period + i);
