@@ -2955,6 +2955,13 @@ Note that once you've configured client authorization, anyone else with the
 address won't be able to access it from this point on. If no authorization is
 configured, the service will be accessible to all.
 
+[[HiddenServiceOfflineKeys]] **HiddenServiceOfflineKeys** **0**|**1**::
+    When this option is enabled, a Tor hidden service will search for
+    pre-generated cryptographic keys to use. (Default: 0)
+
+    **WARNING:** Once the key pool is exhausted (and not resupplied), the
+    HiddenService will cease to function.
+
 TESTING NETWORK OPTIONS
 -----------------------
 

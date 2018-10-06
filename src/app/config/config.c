@@ -462,6 +462,7 @@ static config_var_t option_vars_[] = {
   VAR("HiddenServiceOptions",LINELIST_V, RendConfigLines,    NULL),
   VAR("HiddenServicePort",   LINELIST_S, RendConfigLines,    NULL),
   VAR("HiddenServiceVersion",LINELIST_S, RendConfigLines,    NULL),
+  VAR("HiddenServiceOfflineKeys", LINELIST_S, RendConfigLines, NULL),
   VAR("HiddenServiceAuthorizeClient",LINELIST_S,RendConfigLines, NULL),
   VAR("HiddenServiceAllowUnknownPorts",LINELIST_S, RendConfigLines, NULL),
   VAR("HiddenServiceMaxStreams",LINELIST_S, RendConfigLines, NULL),

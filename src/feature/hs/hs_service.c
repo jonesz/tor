@@ -1022,6 +1022,82 @@ write_address_to_file(const hs_service_t *service, const char *fname_)
   return ret;
 }
 
+/* Load pre-generated ed25519 keys for use as a blinded public key and
+ * a descriptor keypair. Load a certificate to be used as a descriptor
+ * certificate. Return 0 on success else -1 on error. */
+static int
+load_offline_keys(const hs_service_t *service, hs_service_descriptor_t *desc,
+    uint64_t time_period_num)
+{
+  int ret = -1;
+  const hs_service_config_t *config;
+
+  ed25519_keypair_t *kp;
+  char *fname = NULL;
+  char *fname_suffix = NULL;
+  uint32_t flags;
+
+  tor_assert(service);
+  config = &service->config;
+
+  /* Load a blinded public key ONLY and copy it to the descriptor's blinded_kp
+   * field. */
+  tor_asprintf(&fname_suffix, "hs_ed25519_blinded_%" PRIu64, time_period_num);
+  flags = INIT_ED_KEY_OFFLINE_SECRET | INIT_ED_KEY_SPLIT
+    | INIT_ED_KEY_MISSING_SECRET_OK;
+  fname = hs_path_from_filename(config->directory_path, fname_suffix);
+  kp = ed_key_init_from_file(fname, flags, LOG_INFO, NULL, 0, 0, 0, NULL, NULL);
+
+  /* XXX: I don't know what sort of filenames we should be exposing to the
+   * logs. */
+  if (!kp) {
+    log_warn(LD_REND, "Unable to load a blinded key from %s. Failing", fname);
+    goto end;
+  }
+
+  /* Make sure that our public key isn't just zero'd memory.
+   * XXX: Will ed_key_init... fail if it's zero'd memory? */
+  tor_assert(!tor_mem_is_zero((char *) &kp->pubkey, ED25519_PUBKEY_LEN));
+  memcpy(&desc->blinded_kp.pubkey, &kp->pubkey, ED25519_PUBKEY_LEN);
+
+  /* Memory free for next keyload. */
+  tor_free(fname);
+  tor_free(fname_suffix);
+  ed25519_keypair_free(kp);
+
+  /* Load a descriptor keypair and copy it to the descriptor's signing_kp
+   * field. Load the certificate aswell. */
+  tor_asprintf(&fname_suffix, "hs_ed25519_descriptor_%" PRIu64,
+      time_period_num);
+  flags = INIT_ED_KEY_SPLIT | INIT_ED_KEY_NEEDCERT;
+  fname = hs_path_from_filename(config->directory_path, fname_suffix);
+
+  /* XXX: We have the signing public key right there, should we pass it? */
+  kp = ed_key_init_from_file(fname, flags, LOG_INFO, NULL, 0, 0,
+     CERT_TYPE_SIGNING_HS_DESC, &desc->desc->plaintext_data.signing_key_cert, NULL);
+
+  if (!kp) {
+    log_warn(LD_REND, "Unable to load a descriptor keypair/certificate from "
+        "%s. Failing", fname);
+    goto end;
+  }
+
+  /* Make sure that the descriptor keypair isn't zero'd memory. 
+   * XXX: Will ed_key_init... fail if it's zero'd memory? */
+  tor_assert(!tor_mem_is_zero((char *) &kp->pubkey, ED25519_PUBKEY_LEN));
+  tor_assert(!tor_mem_is_zero((char *) &kp->seckey, ED25519_SECKEY_LEN));
+  memcpy(&desc->signing_kp.pubkey, &kp->pubkey, ED25519_PUBKEY_LEN);
+  memcpy(&desc->signing_kp.seckey, &kp->seckey, ED25519_SECKEY_LEN);
+
+  ret = 0;
+
+ end:
+  tor_free(fname);
+  tor_free(fname_suffix);
+  ed25519_keypair_free(kp);
+  return ret;
+}
+
 /* Load and/or generate private keys for the given service. On success, the
  * hostname file will be written to disk along with the master private key iff
  * the service is not configured for offline keys. Return 0 on success else -1
@@ -1032,6 +1108,7 @@ load_service_keys(hs_service_t *service)
   int ret = -1;
   char *fname = NULL;
   ed25519_keypair_t *kp;
+  uint32_t key_flags = 0;
   const hs_service_config_t *config;
 
   tor_assert(service);
@@ -1050,28 +1127,50 @@ load_service_keys(hs_service_t *service)
 
   /* Try to load the keys from file or generate it if not found. */
   fname = hs_path_from_filename(config->directory_path, fname_keyfile_prefix);
-  /* Don't ask for key creation, we want to know if we were able to load it or
-   * we had to generate it. Better logging! */
-  kp = ed_key_init_from_file(fname, INIT_ED_KEY_SPLIT, LOG_INFO, NULL, 0, 0,
-                             0, NULL, NULL);
+
+  if (config->offline_keys) {
+    /* We shouldn't be attempting to load a secret or creating a key if
+     * it's not found. */
+    key_flags = INIT_ED_KEY_SPLIT | INIT_ED_KEY_OFFLINE_SECRET
+      | INIT_ED_KEY_MISSING_SECRET_OK;
+  } else {
+    /* Don't ask for key creation, we want to know if we were able to load it
+     * or we had to generate it. Better logging! */
+    key_flags = INIT_ED_KEY_SPLIT;
+  }
+
+  kp = ed_key_init_from_file(fname, key_flags, LOG_INFO, NULL, 0, 0, 0, NULL, NULL);
+
   if (!kp) {
-    log_info(LD_REND, "Unable to load keys from %s. Generating it...", fname);
-    /* We'll now try to generate the keys and for it we want the strongest
-     * randomness for it. The keypair will be written in different files. */
-    uint32_t key_flags = INIT_ED_KEY_CREATE | INIT_ED_KEY_EXTRA_STRONG |
-                         INIT_ED_KEY_SPLIT;
-    kp = ed_key_init_from_file(fname, key_flags, LOG_WARN, NULL, 0, 0, 0,
-                               NULL, NULL);
-    if (!kp) {
-      log_warn(LD_REND, "Unable to generate keys and save in %s.", fname);
+    if (config->offline_keys) {
+      /* We were unable to load offline keys, so we're failing. */
+      log_warn(LD_REND, "Unable to load offline keys from %s. Failing.",
+          fname);
       goto end;
+    } else {
+      log_info(LD_REND, "Unable to load keys from %s. Generating it...",
+          fname);
+      /* We'll now try to generate the keys and for it we want the strongest
+       * randomness for it. The keypair will be written in different files. */
+      key_flags = INIT_ED_KEY_CREATE | INIT_ED_KEY_EXTRA_STRONG |
+                           INIT_ED_KEY_SPLIT;
+      kp = ed_key_init_from_file(fname, key_flags, LOG_WARN, NULL, 0, 0, 0,
+                               NULL, NULL);
+      if (!kp) {
+        log_warn(LD_REND, "Unable to generate keys and save in %s.", fname);
+        goto end;
+      }
     }
   }
 
   /* Copy loaded or generated keys to service object. */
   ed25519_pubkey_copy(&service->keys.identity_pk, &kp->pubkey);
-  memcpy(&service->keys.identity_sk, &kp->seckey,
+
+  /* The secret key isn't present if we're using pre-generated keys. */
+  if (!config->offline_keys) {
+    memcpy(&service->keys.identity_sk, &kp->seckey,
          sizeof(service->keys.identity_sk));
+  }
   /* This does a proper memory wipe. */
   ed25519_keypair_free(kp);
 
@@ -1091,7 +1190,7 @@ load_service_keys(hs_service_t *service)
     goto end;
   }
 
-  /* Succes. */
+  /* Success. */
   ret = 0;
  end:
   tor_free(fname);
@@ -1810,14 +1909,17 @@ build_service_desc_superencrypted(const hs_service_t *service,
 }
 
 /* Populate the descriptor plaintext section from the given service object.
- * The caller must make sure that the keys in the descriptors are valid that
- * is are non-zero. Return 0 on success else -1 on error. */
+ * The caller must make sure that the keys in the descriptors are valid, that
+ * is they are non-zero. Return 0 on success else -1 on error. */
 static int
 build_service_desc_plaintext(const hs_service_t *service,
                              hs_service_descriptor_t *desc, time_t now)
 {
   int ret = -1;
   hs_desc_plaintext_data_t *plaintext;
+
+  const hs_service_config_t *config;
+  config = &service->config;
 
   tor_assert(service);
   tor_assert(desc);
@@ -1832,17 +1934,28 @@ build_service_desc_plaintext(const hs_service_t *service,
                        desc->desc->subcredential);
 
   plaintext = &desc->desc->plaintext_data;
-
   plaintext->version = service->config.version;
+
+  /* XXX: When considering pre-generated keys, I'm assuming that the lifetime
+   * of the cert would be a fuzzy time when the descriptor was "uploaded",
+   * not (HS_DESC_DEFAULT_LIFETIME + the period of time since generation). */
   plaintext->lifetime_sec = HS_DESC_DEFAULT_LIFETIME;
-  plaintext->signing_key_cert =
+
+  if (!config->offline_keys) {
+    plaintext->signing_key_cert =
     tor_cert_create(&desc->blinded_kp, CERT_TYPE_SIGNING_HS_DESC,
                     &desc->signing_kp.pubkey, now, HS_DESC_CERT_LIFETIME,
                     CERT_FLAG_INCLUDE_SIGNING_KEY);
+  }
+
   if (plaintext->signing_key_cert == NULL) {
-    log_warn(LD_REND, "Unable to create descriptor signing certificate for "
-                      "service %s",
-             safe_str_client(service->onion_address));
+    if (config->offline_keys) {
+      log_warn(LD_REND, "Didn't find a pre-generated certificate for service "
+          "%s", safe_str_client(service->onion_address));
+    } else {
+      log_warn(LD_REND, "Unable to create descriptor signing certificate for "
+          "service %s", safe_str_client(service->onion_address));
+    }
     goto end;
   }
   /* Copy public key material to go in the descriptor. */
@@ -1873,9 +1986,9 @@ generate_ope_cipher_for_desc(const hs_service_descriptor_t *hs_desc)
   return crypto_ope_new(key);
 }
 
-/* For the given service and descriptor object, create the key material which
- * is the blinded keypair, the descriptor signing keypair, the ephemeral
- * keypair, and the descriptor cookie. Return 0 on success else -1 on error
+/* For the given service and descriptor object, create or load from disk (iff
+ * offline keys are being used) the key material which is the blinded keypair
+ * and the descriptor signing keypair. Return 0 on success else -1 on error
  * where the generated keys MUST be ignored. */
 static int
 build_service_desc_keys(const hs_service_t *service,
@@ -1885,50 +1998,58 @@ build_service_desc_keys(const hs_service_t *service,
   ed25519_keypair_t kp;
 
   tor_assert(desc);
-  tor_assert(!tor_mem_is_zero((char *) &service->keys.identity_pk,
+
+  const hs_service_config_t *config;
+  config = &service->config;
+
+  if (config->offline_keys) {
+    /* Attempt to load a blinded public key, a descriptor keypair, and a
+     * cert.
+     * XXX: How does this work with client authorizaton; how does the work
+     * with this new OPE cipher junk? */
+    if (load_offline_keys(service, desc, desc->time_period_num) < 0) {
+      log_warn(LD_REND, "Couldn't load offline keys for service %s.",
+          safe_str_client(service->onion_address));
+      ret = -1;
+    }
+  } else {
+    /* Make sure we don't have a zero'd identity_pk; deriving a blinded pubkey
+     * from that would be _very_ bad. */
+    tor_assert(!tor_mem_is_zero((char *) &service->keys.identity_pk,
              ED25519_PUBKEY_LEN));
 
-  /* XXX: Support offline key feature (#18098). */
-
-  /* Copy the identity keys to the keypair so we can use it to create the
-   * blinded key. */
-  memcpy(&kp.pubkey, &service->keys.identity_pk, sizeof(kp.pubkey));
-  memcpy(&kp.seckey, &service->keys.identity_sk, sizeof(kp.seckey));
-  /* Build blinded keypair for this time period. */
-  hs_build_blinded_keypair(&kp, NULL, 0, desc->time_period_num,
+    /* Copy the identity keys to the keypair so we can use it to create the
+     * blinded key. */
+    memcpy(&kp.pubkey, &service->keys.identity_pk, sizeof(kp.pubkey));
+    memcpy(&kp.seckey, &service->keys.identity_sk, sizeof(kp.seckey));
+    /* Build blinded keypair for this time period. */
+    hs_build_blinded_keypair(&kp, NULL, 0, desc->time_period_num,
                            &desc->blinded_kp);
-  /* Let's not keep too much traces of our keys in memory. */
-  memwipe(&kp, 0, sizeof(kp));
+    /* Let's not keep too much traces of our keys in memory. */
+    memwipe(&kp, 0, sizeof(kp));
+
+    /* No need for extra strong, this is a temporary key only for this
+     * descriptor. Nothing long term. */
+    if (ed25519_keypair_generate(&desc->signing_kp, 0) < 0) {
+        log_warn(LD_REND, "Can't generate descriptor signing keypair for "
+                      "service %s",
+             safe_str_client(service->onion_address));
+        ret = -1;
+        goto end;
+    }
+  }
 
   /* Compute the OPE cipher struct (it's tied to the current blinded key) */
   log_info(LD_GENERAL,
-           "Getting OPE for TP#%u", (unsigned) desc->time_period_num);
+          "Getting OPE for TP#%u", (unsigned) desc->time_period_num);
   tor_assert_nonfatal(!desc->ope_cipher);
   desc->ope_cipher = generate_ope_cipher_for_desc(desc);
-
-  /* No need for extra strong, this is a temporary key only for this
-   * descriptor. Nothing long term. */
-  if (ed25519_keypair_generate(&desc->signing_kp, 0) < 0) {
-    log_warn(LD_REND, "Can't generate descriptor signing keypair for "
-                      "service %s",
-             safe_str_client(service->onion_address));
-    goto end;
-  }
-
-  /* No need for extra strong, this is a temporary key only for this
-   * descriptor. Nothing long term. */
-  if (curve25519_keypair_generate(&desc->auth_ephemeral_kp, 0) < 0) {
-    log_warn(LD_REND, "Can't generate auth ephemeral keypair for "
-                      "service %s",
-             safe_str_client(service->onion_address));
-    goto end;
-  }
 
   /* Random a descriptor cookie to be used as a part of a key to encrypt the
    * descriptor, if the client auth is enabled. */
   if (service->config.is_client_auth_enabled) {
     crypto_strongest_rand(desc->descriptor_cookie,
-                          sizeof(desc->descriptor_cookie));
+                        sizeof(desc->descriptor_cookie));
   }
 
   /* Success. */

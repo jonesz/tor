@@ -1,0 +1,17 @@
+bin_PROGRAMS+= src/tools/tor-genkey/tor-genkey
+
+TOR_GENKEY_SOURCES = \
+  src/tools/tor-genkey/tor-genkey.c \
+  src/tools/tor-genkey/hs3_util.c
+
+src_tools_tor_genkey_tor_genkey_SOURCES = $(TOR_GENKEY_SOURCES)
+src_tools_tor_genkey_tor_genkey_LDFLAGS = @TOR_LDFLAGS_zlib@ @TOR_LDFLAGS_openssl@
+src_tools_tor_genkey_tor_genkey_LDADD = src/common/libor.a \
+  src/trunnel/libor-trunnel.a \
+  src/common/libor-crypto.a \
+	src/common/libor-ctime.a \
+	$(LIBKECCAK_TINY) \
+	$(LIBDONNA) \
+	$(rust_ldadd) \
+	@TOR_LIB_MATH@ @TOR_ZLIB_LIBS@ @TOR_OPENSSL_LIBS@ \
+	@TOR_LIB_WS32@ @TOR_LIB_GDI@ @TOR_LIB_USERENV@ @CURVE25519_LIBS@

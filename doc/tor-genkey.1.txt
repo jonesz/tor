@@ -1,0 +1,70 @@
+:man source:  Tor
+:man manual:  Tor Manual
+tor-genkey(1)
+=============
+Ethan Jones
+
+NAME
+----
+tor-genkey - Generate cryptographic material for third-generation Tor Hidden Services.
+
+SYNOPSIS
+--------
+**tor-genkey** [-h|--help] [-v|--verbose] [-g {hs3master, hs3offline}] [-l __existing_secret_file__]
+[-ct __current_time_period__] [-pt __projected_time_period__] [-n __num_keys__]
+
+DESCRIPTION
+-----------
+**tor-genkey** generates blinded keys, descriptor keys, and ed25519 certificates for use by
+third-generation Tor Hidden Services that have enabled the HiddenServiceOfflineKeys option.
+
+Third-generation Tor Hidden Services compute a tandem of keys and certificates for each time period
+based off their master ed25519 secret key; tor-genkey allows a Hidden Service operator to precompute
+this cryptographic material, enabling them to run a hidden service with their master secret key
+offline.
+
+After you use this program and you've enabled offline keys, DO NOT COPY hs_ed25519_secret_key to
+your Hidden Service data directory.
+
+OPTIONS
+-------
+**-h** or **--help**::
+  Display help text and exit.
+
+**-v** or **--verbose**::
+  Placeholder; should toggle tool verbosity.
+
+**-g** {hs3master, hs3offline}::
+  Generate cryptographic material. If hs3master is passed, *tor-genkey* will produce a new master
+  ed25519 keypair. If hs3offline is passed, *tor-genkey* will attempt to produce offline keys.
+
+**-l** __FILENAME__::
+  Attempts to load an ed25519 master secret key from the passed filename.
+
+**-ct** __CURRENT_TIME_PERIOD__::
+  Sets the current time period; if not set, *tor-genkey* will calculate the current time period. 
+  For more information, research Tor's consensus/time periods in the third-generation Hidden Service spec.
+
+**-pt** __PROJECTED_TIME_PERIOD__::
+  Sets the time period to begin key generation at; if not set, *tor-genkey* will calculate the current
+  time period abd build keys for that value + 1.
+  For more information, research Tor's consensus/time periods in the third-generation Hidden Service spec.
+
+**-n** __NUM_KEYS__::
+  The number of keys to generate (needed by -g hs3offline). Default: 15.
+
+BUGS
+----
+This tool might be considered an early-alpha; that being said, using the cryptographic keys generated
+by this tool should at worst, crash your instance of Tor.
+
+SEE ALSO
+--------
+**tor**(1) +
+
+See also the implemented proposal 224, "224-rend-spec-ng.txt".
+
+AUTHORS
+-------
+  Ethan Jones
+
