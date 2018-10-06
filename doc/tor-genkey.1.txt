@@ -42,7 +42,7 @@ OPTIONS
   Attempts to load an ed25519 master secret key from the passed filename.
 
 **-ct** __CURRENT_TIME_PERIOD__::
-  Sets the current time period; if not set, *tor-genkey* will calculate the current time period. 
+  Sets the current time period; if not set, *tor-genkey* will calculate the current time period.
   For more information, research Tor's consensus/time periods in the third-generation Hidden Service spec.
 
 **-pt** __PROJECTED_TIME_PERIOD__::

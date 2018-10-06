@@ -1048,8 +1048,6 @@ load_offline_keys(const hs_service_t *service, hs_service_descriptor_t *desc,
   fname = hs_path_from_filename(config->directory_path, fname_suffix);
   kp = ed_key_init_from_file(fname, flags, LOG_INFO, NULL, 0, 0, 0, NULL, NULL);
 
-  /* XXX: I don't know what sort of filenames we should be exposing to the
-   * logs. */
   if (!kp) {
     log_warn(LD_REND, "Unable to load a blinded key from %s. Failing", fname);
     goto end;
@@ -1082,7 +1080,7 @@ load_offline_keys(const hs_service_t *service, hs_service_descriptor_t *desc,
     goto end;
   }
 
-  /* Make sure that the descriptor keypair isn't zero'd memory. 
+  /* Make sure that the descriptor keypair isn't zero'd memory.
    * XXX: Will ed_key_init... fail if it's zero'd memory? */
   tor_assert(!tor_mem_is_zero((char *) &kp->pubkey, ED25519_PUBKEY_LEN));
   tor_assert(!tor_mem_is_zero((char *) &kp->seckey, ED25519_SECKEY_LEN));
@@ -1090,7 +1088,6 @@ load_offline_keys(const hs_service_t *service, hs_service_descriptor_t *desc,
   memcpy(&desc->signing_kp.seckey, &kp->seckey, ED25519_SECKEY_LEN);
 
   ret = 0;
-
  end:
   tor_free(fname);
   tor_free(fname_suffix);
@@ -1935,10 +1932,6 @@ build_service_desc_plaintext(const hs_service_t *service,
 
   plaintext = &desc->desc->plaintext_data;
   plaintext->version = service->config.version;
-
-  /* XXX: When considering pre-generated keys, I'm assuming that the lifetime
-   * of the cert would be a fuzzy time when the descriptor was "uploaded",
-   * not (HS_DESC_DEFAULT_LIFETIME + the period of time since generation). */
   plaintext->lifetime_sec = HS_DESC_DEFAULT_LIFETIME;
 
   if (!config->offline_keys) {
@@ -2004,9 +1997,7 @@ build_service_desc_keys(const hs_service_t *service,
 
   if (config->offline_keys) {
     /* Attempt to load a blinded public key, a descriptor keypair, and a
-     * cert.
-     * XXX: How does this work with client authorizaton; how does the work
-     * with this new OPE cipher junk? */
+     * cert. */
     if (load_offline_keys(service, desc, desc->time_period_num) < 0) {
       log_warn(LD_REND, "Couldn't load offline keys for service %s.",
           safe_str_client(service->onion_address));
