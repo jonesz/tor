@@ -2010,7 +2010,7 @@ build_service_desc_keys(const hs_service_t *service,
     if (load_offline_keys(service, desc, desc->time_period_num) < 0) {
       log_warn(LD_REND, "Couldn't load offline keys for service %s.",
           safe_str_client(service->onion_address));
-      ret = -1;
+      goto end;
     }
   } else {
     /* Make sure we don't have a zero'd identity_pk; deriving a blinded pubkey
@@ -2034,9 +2034,17 @@ build_service_desc_keys(const hs_service_t *service,
         log_warn(LD_REND, "Can't generate descriptor signing keypair for "
                       "service %s",
              safe_str_client(service->onion_address));
-        ret = -1;
         goto end;
     }
+  }
+
+  /* No need for extra strong, this is a temporary key only for this
+   * descriptor. Nothing long term. */
+  if (curve25519_keypair_generate(&desc->auth_ephemeral_kp, 0) < 0) {
+        log_warn(LD_REND, "Can't generate auth ephemeral keypair for "
+                      "service %s",
+            safe_str_client(service->onion_address));
+    goto end;
   }
 
   /* Compute the OPE cipher struct (it's tied to the current blinded key) */
