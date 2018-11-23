@@ -1046,7 +1046,7 @@ load_offline_keys(const hs_service_t *service, hs_service_descriptor_t *desc,
   flags = INIT_ED_KEY_OFFLINE_SECRET | INIT_ED_KEY_SPLIT
     | INIT_ED_KEY_MISSING_SECRET_OK;
   fname = hs_path_from_filename(config->directory_path, fname_suffix);
-  kp = ed_key_init_from_file(fname, flags, LOG_INFO, NULL, 0, 0, 0, NULL);
+  kp = ed_key_init_from_file(fname, flags, LOG_INFO, NULL, 0, 0, 0, NULL, NULL);
 
   /* XXX: I don't know what sort of filenames we should be exposing to the
    * logs. */
@@ -1074,7 +1074,7 @@ load_offline_keys(const hs_service_t *service, hs_service_descriptor_t *desc,
 
   /* XXX: We have the signing public key right there, should we pass it? */
   kp = ed_key_init_from_file(fname, flags, LOG_INFO, NULL, 0, 0,
-     CERT_TYPE_SIGNING_HS_DESC, &desc->desc->plaintext_data.signing_key_cert);
+     CERT_TYPE_SIGNING_HS_DESC, &desc->desc->plaintext_data.signing_key_cert, NULL);
 
   if (!kp) {
     log_warn(LD_REND, "Unable to load a descriptor keypair/certificate from "
@@ -1139,7 +1139,7 @@ load_service_keys(hs_service_t *service)
     key_flags = INIT_ED_KEY_SPLIT;
   }
 
-  kp = ed_key_init_from_file(fname, key_flags, LOG_INFO, NULL, 0, 0, 0, NULL);
+  kp = ed_key_init_from_file(fname, key_flags, LOG_INFO, NULL, 0, 0, 0, NULL, NULL);
 
   if (!kp) {
     if (config->offline_keys) {
@@ -1155,7 +1155,7 @@ load_service_keys(hs_service_t *service)
       key_flags = INIT_ED_KEY_CREATE | INIT_ED_KEY_EXTRA_STRONG |
                            INIT_ED_KEY_SPLIT;
       kp = ed_key_init_from_file(fname, key_flags, LOG_WARN, NULL, 0, 0, 0,
-                               NULL);
+                               NULL, NULL);
       if (!kp) {
         log_warn(LD_REND, "Unable to generate keys and save in %s.", fname);
         goto end;
@@ -1996,7 +1996,8 @@ generate_ope_cipher_for_desc(const hs_service_descriptor_t *hs_desc)
  * where the generated keys MUST be ignored. */
 static int
 build_service_desc_keys(const hs_service_t *service,
-                        hs_service_descriptor_t *desc)
+                        hs_service_descriptor_t *desc,
+                        uint64_t time_period_num)
 {
   int ret = -1;
   ed25519_keypair_t kp;
@@ -2093,7 +2094,7 @@ build_service_descriptor(hs_service_t *service, time_t now,
   desc->time_period_num = time_period_num;
 
   /* Create the needed keys so we can setup the descriptor content. */
-  if (build_service_desc_keys(service, desc) < 0) {
+  if (build_service_desc_keys(service, desc, time_period_num) < 0) {
     goto err;
   }
   /* Setup plaintext descriptor content. */
